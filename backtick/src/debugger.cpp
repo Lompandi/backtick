@@ -87,39 +87,6 @@ void Debugger_t::Print(const char* Msg) {
     Control_->ControlledOutput(DEBUG_OUTCTL_AMBIENT_DML, DEBUG_OUTPUT_NORMAL, Msg);
 }
 
-void hexdump(const uint8_t* data, size_t size) {
-    const size_t bytes_per_line = 16;
-
-    for (size_t i = 0; i < size; i += bytes_per_line) {
-        std::printf("%08zx  ", i);
-
-        for (size_t j = 0; j < bytes_per_line; ++j) {
-            if (i + j < size) {
-                std::printf("%02x ", data[i + j]);
-            }
-            else {
-                std::printf("   "); 
-            }
-
-            if (j == 7) std::printf(" ");  // Extra space after 8 bytes
-        }
-
-        std::printf(" |");
-
-        for (size_t j = 0; j < bytes_per_line; ++j) {
-            if (i + j < size) {
-                unsigned char c = data[i + j];
-                std::printf("%c", std::isprint(c) ? c : '.');
-            }
-            else {
-                std::printf(" ");
-            }
-        }
-
-        std::printf("|\n");
-    }
-}
-
 bool Debugger_t::ReadPhysicalMemory(const std::uint64_t PhysicalAddress, const void* Buffer, std::size_t Size) {
     ULONG BytesRead = 0;
     HRESULT Status = DataSpaces_->ReadPhysical(PhysicalAddress, (uint8_t*)Buffer, Size, &BytesRead);
@@ -150,10 +117,6 @@ const std::uint8_t* Debugger_t::GetPhysicalPage(const std::uint64_t PhysicalAddr
 
         LoadedPhysicalPage_[AlignedPa] = std::move(Buffer);
     }
-
-    // std::println("Fetching page: {:#x}", AlignedPa);
-
-    // hexdump(LoadedPhysicalPage_.at(AlignedPa).get(), 0x100);
 
     return LoadedPhysicalPage_.at(AlignedPa).get();
 }
@@ -217,12 +180,8 @@ std::uint64_t Debugger_t::Reg64(std::string_view Name) const {
         return 0;
     }
 
-    // std::println("[*] Register index: {}", Index);
-
     DEBUG_VALUE RegValue;
     Registers_->GetValue(Index, &RegValue);
-
-    // std::println("[*] Register value: {:#x}", RegValue.I64);
 
     return RegValue.I64;
 }

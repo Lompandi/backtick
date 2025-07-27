@@ -8,6 +8,11 @@
 
 #include "globals.hpp"
 
+//
+// Stolen from Axel Souchet - 0verclock's snapshot emulator project :p
+// https://github.com/0vercl0k/wtf/blob/main/src/wtf/bochscpu_backend.cc
+//
+
 class Emulator {
 public:
 	Emulator();
@@ -86,6 +91,15 @@ private:
 	void TlbControlHook(uint32_t,
 		uint32_t What, uint64_t NewCrValue);
 
+	void CNearBranchHook(uint32_t Cpu, uint64_t Rip,
+		uint64_t NextRip);
+
+	void UcNearBranchHook(uint32_t Cpu, uint32_t What,
+		uint64_t Rip, uint64_t NextRip);
+
+	void UcFarBranchHook(uint32_t Cpu, uint32_t What,
+		uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip);
+
 	static void StaticGpaMissingHandler(const std::uint64_t Gpa);
 
 	static void StaticPhyAccessHook(void* Context, uint32_t Id, uint64_t PhysicalAddress,
@@ -113,6 +127,15 @@ private:
 
 	static void StaticHltHook(void* Context, uint32_t Cpu);
 
+	static void StaticCNearBranchHook(void* Context, uint32_t Cpu, uint64_t Rip,
+		uint64_t NextRip);
+
+	static void StaticUcNearBranchHook(void* Context, uint32_t Cpu, uint32_t What,
+		uint64_t Rip, uint64_t NextRip);
+
+	static void StaticUcFarBranchHook(void* Context, uint32_t Cpu, uint32_t What,
+		uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip);
+
 	bochscpu_cpu_t Cpu_ = nullptr;
 
 	bochscpu_hooks_t Hooks_ = {};
@@ -130,6 +153,10 @@ private:
 	std::unordered_set<std::uint64_t> MappedPhyPages_;
 
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DirtiedPage_;
+
+	std::uint64_t PrevRip_ = 0;
+
+	bool RunTillBranch_ = false;
 
 	bool Active_ = false;
 };

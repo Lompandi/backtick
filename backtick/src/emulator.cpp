@@ -6,7 +6,6 @@
 #include "emulator.hpp"
 
 Emulator g_Emulator;
-
 TimeFrames_t g_TimeFrames;
 
 constexpr bool BochsDebugging = false;
@@ -146,6 +145,24 @@ void Emulator::StaticHltHook(void* Context, uint32_t Cpu) {
 	// TODO
 }
 
+void Emulator::StaticCNearBranchHook(void* Context, uint32_t Cpu, uint64_t Rip,
+	uint64_t NextRip) {
+
+	g_Emulator.CNearBranchHook(Cpu, Rip, NextRip);
+}
+
+void Emulator::StaticUcNearBranchHook(void* Context, uint32_t Cpu, uint32_t What,
+	uint64_t Rip, uint64_t NextRip) {
+	
+	g_Emulator.UcNearBranchHook(Cpu, What, Rip, NextRip);
+}
+
+void Emulator::StaticUcFarBranchHook(void* Context, uint32_t Cpu, uint32_t What,
+	uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip) {
+
+	g_Emulator.UcFarBranchHook(Cpu, What, a1, Rip, a2, NextRip);
+}
+
 // //vgk+0x95754
 bool Emulator::Initialize(const CpuState_t& State) {
 
@@ -168,6 +185,9 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	Hooks_.phy_access = StaticPhyAccessHook;
 	Hooks_.tlb_cntrl = StaticTlbControlHook;
 	Hooks_.hlt = StaticHltHook;
+	Hooks_.cnear_branch_not_taken = StaticCNearBranchHook;
+	Hooks_.cnear_branch_taken = StaticCNearBranchHook;
+	Hooks_.ucnear_branch = StaticUcNearBranchHook;
 
 	HookChain_[0] = &Hooks_;
 	HookChain_[1] = nullptr;
@@ -201,12 +221,20 @@ bool Emulator::RunFromStatus(ULONG Status) {
 
 	switch (Status) {
 	case DEBUG_STATUS_STEP_OVER: {
-		//TODO
+		//
+		// Dbgeng will change the current rip to next instruction pointer before 
+		// changing register state, so we must set rip to previous one and continue to
+		// the current rip to do a step-over
+		//
+		uint64_t TargetAddress = bochscpu_cpu_rip(Cpu_);
+		bochscpu_cpu_set_rip(Cpu_, PrevRip_);
+		Run(TargetAddress);
 		break;
 	}
 	case DEBUG_STATUS_STEP_INTO: {
 		InstructionLimit_ = 1;
 		Run();
+		InstructionLimit_ = 0;
 		break;
 	}
 	case DEBUG_STATUS_GO: {
@@ -214,7 +242,13 @@ bool Emulator::RunFromStatus(ULONG Status) {
 		break;
 	}
 	case DEBUG_STATUS_STEP_BRANCH: {
-		//TODO
+		RunTillBranch_ = true;
+		Run();
+		RunTillBranch_ = false;
+		break;
+	}
+	case DEBUG_STATUS_BREAK: {
+		Stop(0);
 		break;
 	}
 	}
@@ -456,6 +490,33 @@ void Emulator::TlbControlHook(uint32_t,
 	// TODO
 }
 
+void Emulator::CNearBranchHook(uint32_t Cpu, uint64_t Rip,
+	uint64_t NextRip) {
+
+	if (RunTillBranch_) {
+		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
+		Stop(0);
+	}
+}
+
+void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
+	uint64_t Rip, uint64_t NextRip) {
+
+	if (RunTillBranch_) {
+		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
+		Stop(0);
+	}
+}
+
+void Emulator::UcFarBranchHook(uint32_t Cpu, uint32_t What,
+	uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip) {
+
+	if (RunTillBranch_) {
+		BochsDbg("[*] Reached branch instruction (far), stopping cpu...\n");
+		Stop(0);
+	}
+}
+
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
 	return g_Debugger.GetPhysicalPage(PhysicalAddress);
 }
@@ -596,6 +657,13 @@ bool Emulator::SetReg(const Registers_t Reg,
 
 		uint64_t original = Getter(Cpu_);
 		uint64_t result = original;
+
+		//
+		// Save original RIP for further use
+		//
+		if (Reg == Registers_t::Rip) {
+			PrevRip_ = original;
+		}
 
 		switch (Value->Type) {
 		case REGVAL_TYPE_I16:

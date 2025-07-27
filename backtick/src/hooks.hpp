@@ -14,6 +14,8 @@ public:
 
     bool Restore();
 
+    void FlushDbsSplayTreeCache();
+
     bool RestorePatchedBytes();
 
     void* GetOriginal(void** funcAddress) const {

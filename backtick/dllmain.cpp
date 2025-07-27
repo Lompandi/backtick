@@ -58,6 +58,7 @@ DECLARE_API(shadow) {
     // Prepare emulator cpu state for further operations.
     //
     CpuState_t CurrentState; // TODO: Fetch the current CPU state.
+    LoadCpuStateFromJSON(CurrentState, R"(D:\snapshot_test\state.26100.1.amd64fre.ge_release.240331-1435.20250727_2125\regs.json)");
     g_Emulator.Initialize(CurrentState);
 
     InShadowState = true;
@@ -75,6 +76,12 @@ DECLARE_API(unshadow) {
     // Reset emulator's state
     //
     g_Emulator.Reset();
+
+    //
+    // Flush memory display cache to
+    // resync the debugger with the actual ram
+    //
+    g_Hooks.FlushDbsSplayTreeCache();
     
     InShadowState = false;
 }

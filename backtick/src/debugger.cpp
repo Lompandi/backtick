@@ -117,7 +117,7 @@ const std::uint8_t* Debugger_t::GetPhysicalPage(const std::uint64_t PhysicalAddr
 
         if (BytesRead != 0x1000 || Status != S_OK) {
 
-            std::println("Reading physical memory {:#x} failed", PhysicalAddress);
+            // std::println("Reading physical memory {:#x} failed", PhysicalAddress);
 
             return nullptr;
         }

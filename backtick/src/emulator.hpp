@@ -62,9 +62,13 @@ public:
 
 	bool GetReg(const Registers_t Reg, REGVAL* Value) const;
 
+	std::uint64_t Rip() const { return bochscpu_cpu_rip(Cpu_); }
+
+	void Rip(std::uint64_t Value) const { return bochscpu_cpu_set_rip(Cpu_, Value); }
+
 	bool IsGvaMapped(std::uint64_t VirtualAddress) const;
 
-	bool RunFromStatus(ULONG Status);
+	HRESULT RunFromStatus(ULONG Status);
 
 private:
 	void LoadState(const CpuState_t& State);

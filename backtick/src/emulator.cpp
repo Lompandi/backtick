@@ -217,7 +217,7 @@ void Emulator::Run(const std::uint64_t EndAddress) {
 	bochscpu_cpu_run(Cpu_, HookChain_);
 }
 
-bool Emulator::RunFromStatus(ULONG Status) {
+HRESULT Emulator::RunFromStatus(ULONG Status) {
 
 	switch (Status) {
 	case DEBUG_STATUS_STEP_OVER: {
@@ -235,7 +235,7 @@ bool Emulator::RunFromStatus(ULONG Status) {
 		InstructionLimit_ = 1;
 		Run();
 		InstructionLimit_ = 0;
-		break;
+		return 0x80070005;
 	}
 	case DEBUG_STATUS_GO: {
 		Run();
@@ -253,7 +253,7 @@ bool Emulator::RunFromStatus(ULONG Status) {
 	}
 	}
 
-	return true;
+	return E_INVALIDARG;
 }
 
 bool Emulator::VirtTranslate(const std::uint64_t Gva, std::uint64_t& Gpa) const {

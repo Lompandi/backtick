@@ -1,15 +1,23 @@
 
-
-#include <fmt/color.h>
 #include <fmt/format.h>
 
 #include "utils.hpp"
 #include "paging.hpp"
 #include "emulator.hpp"
 
-Emulator* g_Emulator = nullptr;
+Emulator g_Emulator;
 
 TimeFrames_t g_TimeFrames;
+
+constexpr bool BochsDebugging = false;
+
+template <typename... Args_t>
+void BochsDbg(const char* Format, const Args_t &...args) {
+	if constexpr (BochsDebugging) {
+		fmt::print("bochs: ");
+		fmt::print(fmt::runtime(Format), args...);
+	}
+}
 
 Emulator::Emulator() {
 	std::memset(&Hooks_, 0, sizeof(Hooks_));
@@ -22,7 +30,7 @@ static constexpr std::uint64_t PageAlign(std::uint64_t Address) {
 
 void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 
-	std::println("Mapping GPA: {:#x}", Gpa);
+	BochsDbg("Mapping GPA: {:#x}", Gpa);
 
 	//
 	// Align the GPA.
@@ -30,10 +38,10 @@ void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 
 	const std::uint64_t AlignedGpa = PageAlign(Gpa);
 
-	const void* DmpPage
-		= g_Emulator->GetPhysicalPage(AlignedGpa);
-	if (DmpPage == nullptr) {
-		std::println("Failed to fetch memory for {:#x}", Gpa);
+	const void* PhyPage
+		= g_Emulator.GetPhysicalPage(AlignedGpa);
+	if (PhyPage == nullptr) {
+		BochsDbg("Failed to fetch memory for {:#x}", Gpa);
 	}
 
 	static std::size_t Left = 0;
@@ -61,60 +69,70 @@ void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 	Current += Page::Size;
 
 	if (Page == nullptr) {
-		std::println("Failed to allocate memory in GpaMissingHandler.");
+		BochsDbg("Failed to allocate memory in GpaMissingHandler.");
 		__debugbreak();
 	}
 
-	if (DmpPage) {
+	if (PhyPage) {
 		//
 		// Copy the dump page into the new page.
 		//
 
-		std::memcpy(Page, DmpPage, Page::Size);
+		std::memcpy(Page, PhyPage, Page::Size);
 	}
 	else {
 		std::memset(Page, 0, Page::Size);
 	}
 
+	g_Emulator.MappedPhyPages_.insert(AlignedGpa);
 	bochscpu_mem_page_insert(AlignedGpa, Page);
+}
+
+bool Emulator::IsGvaMapped(std::uint64_t VirtualAddress) const {
+	std::uint64_t Gpa = 0;
+	if (!VirtTranslate(VirtualAddress, Gpa)) {
+		BochsDbg("[*] Translation for GVA {:#x} failed", VirtualAddress);
+		return false;
+	}
+	return MappedPhyPages_.contains(AlignPage(Gpa)); 
 }
 
 void Emulator::StaticPhyAccessHook(void* Context, uint32_t Id, uint64_t PhysicalAddress,
 	uintptr_t Len, uint32_t MemType, uint32_t MemAccess) {
 
-	g_Emulator->PhyAccessHook(Id, PhysicalAddress, Len, MemType, MemAccess);
+	g_Emulator.PhyAccessHook(Id, PhysicalAddress, Len, MemType, MemAccess);
 }
 
 void Emulator::StaticAfterExecutionHook(void* Context, uint32_t Id, void* Ins) {
-	g_Emulator->AfterExecutionHook(Id, Ins);
+	g_Emulator.AfterExecutionHook(Id, Ins);
 }
 
 void Emulator::StaticBeforeExecutionHook(void* Context, uint32_t Id, void* Ins) {
-	g_Emulator->BeforeExecutionHook(Id, Ins);
+	g_Emulator.BeforeExecutionHook(Id, Ins);
 }
 
 void Emulator::StaticLinAccessHook(void* Context, uint32_t Id, uint64_t VirtualAddress,
 	uint64_t PhysicalAddress, uintptr_t Len,
 	uint32_t MemType, uint32_t MemAccess) {
 
-	g_Emulator->LinAccessHook(Id, VirtualAddress, PhysicalAddress, Len, MemType, MemAccess);
+	g_Emulator.LinAccessHook(Id, VirtualAddress, PhysicalAddress, Len, MemType, MemAccess);
 }
 
 void Emulator::StaticInterruptHook(void* Context, uint32_t Id, uint32_t Vector) {
 
-	g_Emulator->InterruptHook(Id, Vector);
+	g_Emulator.InterruptHook(Id, Vector);
 }
 
 void Emulator::StaticExceptionHook(void* Context, uint32_t Id, uint32_t Vector,
 	uint32_t ErrorCode) {
 
-	g_Emulator->ExceptionHook(Id, Vector, ErrorCode);
+	g_Emulator.ExceptionHook(Id, Vector, ErrorCode);
 }
 
 void Emulator::StaticTlbControlHook(void* Context, uint32_t Id, uint32_t What,
 	uint64_t NewCrValue) {
 
-	g_Emulator->TlbControlHook(Id, What, NewCrValue);
+	g_Emulator.TlbControlHook(Id, What, NewCrValue);
 }
 
 void Emulator::StaticOpcodeHook(void* Context, uint32_t Id, const void* i,
@@ -157,12 +175,6 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	bochscpu_mem_missing_page(StaticGpaMissingHandler);
 
 	//
-	// Set the global emulator instance.
-	//
-
-	g_Emulator = this;
-
-	//
 	// Load the state into the CPU.
 	//
 
@@ -180,9 +192,34 @@ void Emulator::Run(const std::uint64_t EndAddress) {
 	// Lift off.
 	//
 
-	std::println("Emulation start.");
+	BochsDbg("Emulation start.");
 
 	bochscpu_cpu_run(Cpu_, HookChain_);
+}
+
+bool Emulator::RunFromStatus(ULONG Status) {
+
+	switch (Status) {
+	case DEBUG_STATUS_STEP_OVER: {
+		//TODO
+		break;
+	}
+	case DEBUG_STATUS_STEP_INTO: {
+		InstructionLimit_ = 1;
+		Run();
+		break;
+	}
+	case DEBUG_STATUS_GO: {
+		Run();
+		break;
+	}
+	case DEBUG_STATUS_STEP_BRANCH: {
+		//TODO
+		break;
+	}
+	}
+
+	return true;
 }
 
 bool Emulator::VirtTranslate(const std::uint64_t Gva, std::uint64_t& Gpa) const {
@@ -258,7 +295,7 @@ bool Emulator::VirtWrite(const std::uint64_t Gva, const uint8_t* Buffer,
 			CurrentGva, Gpa);
 
 		if (!Translate) {
-			std::print("Translation of GVA {:#x} failed\n", CurrentGva);
+			BochsDbg("Translation of GVA {:#x} failed\n", CurrentGva);
 			return false;
 		}
 
@@ -294,11 +331,22 @@ bool Emulator::VirtWrite1(const std::uint64_t Gva, const std::uint8_t Value) {
 
 
 void Emulator::AfterExecutionHook(uint32_t, void*) {
+	InstructionExecutedCount_ += 1;
+
+	//
+	// Check if we exceed execution limit, this is useful when implementing things like
+	// single-stepping
+	//
+	if (InstructionLimit_ && InstructionExecutedCount_ >= InstructionLimit_) {
+		BochsDbg("Reached execution limit, stopping emulator...");
+		Stop(0);
+	}
+
 	//
 	// Stop the cpu if we reached end address.
 	//
 	if (bochscpu_cpu_rip(Cpu_) == ExecEndAddress_) [[unlikely]] {
-		std::println("Reached frame end, stopping emulator...");
+		BochsDbg("Reached end address, stopping emulator...");
 		Stop(0);
 	}
 }
@@ -310,12 +358,12 @@ void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
 
 static std::string Hexdump(const std::uint8_t* Data, std::size_t Size) {
 	if (Size == 8) {
-		return fmt::format("{:#016x}", *(std::uint64_t*)Data);
+		return std::format("{:#016x}", *(std::uint64_t*)Data);
 	}
 
 	std::string Format = "";
 	for (int i = 0; i < Size; i++) {
-		Format += fmt::format("{:02x} ", Data[i]);
+		Format += std::format("{:02x} ", Data[i]);
 	}
 	return Format;
 }
@@ -330,22 +378,32 @@ void Emulator::LinAccessHook(uint32_t,
 		return;
 	}
 	
-	std::println("Dirtied GVA: {:#x}", VirtualAddress);
+	BochsDbg("Dirtied GVA: {:#x}", VirtualAddress);
 
 	DirtyPhysicalMemoryRange(PhysicalAddress, Len);
 }
 
 bool Emulator::DirtyGpaPage(const std::uint64_t Gpa) {
-	auto OriginalPage = std::make_unique<std::uint8_t[]>(Page::Size);
-	const std::uint8_t* OriginalPageData
-		= g_Debugger.GetPhysicalPage(Gpa);
-	
-	if (!OriginalPage) {
+	auto AlignGpa = AlignPage(Gpa);
+	if (DirtiedPage_.contains(AlignGpa)) {
 		return false;
 	}
 
+	BochsDbg(
+		"DirtyPhysicalMemoryRange: Adding GPA {:#x} to the dirty set..\n",
+		Gpa);
+
+	auto OriginalPage = std::make_unique<std::uint8_t[]>(Page::Size);
+	const std::uint8_t* OriginalPageData
+		= g_Debugger.GetPhysicalPage(Gpa);
+
+	if (!OriginalPageData) {
+		return false; // Don't store this page!
+	}
+
 	memcpy(OriginalPage.get(), OriginalPageData, Page::Size);
-	return DirtiedPage_.emplace(AlignPage(Gpa), std::move(OriginalPage)).second;
+	DirtiedPage_[AlignGpa] = std::move(OriginalPage);
+	return true;
 }
 
 void Emulator::DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len) {
@@ -353,10 +411,6 @@ void Emulator::DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len) {
 	const std::uint64_t EndGpa = Gpa + Len;
 	for (auto AlignedGpa = PageAlign(Gpa); AlignedGpa < EndGpa;
 		AlignedGpa += Page::Size) {
-
-		std::print(
-			"DirtyPhysicalMemoryRange: Adding GPA {:#x} to the dirty set..\n",
-			AlignedGpa);
 
 		DirtyGpaPage(AlignedGpa);
 	}
@@ -381,7 +435,7 @@ void Emulator::InterruptHook(uint32_t, uint32_t Vector) {
 	// Hit an exception, dump it on stdout.
 	//
 
-	std::println("InterruptHook: Vector({:#x})", Vector);
+	BochsDbg("InterruptHook: Vector({:#x})", Vector);
 
 	//
 	// If we trigger a breakpoint it's probably time to stop the cpu.
@@ -391,8 +445,8 @@ void Emulator::InterruptHook(uint32_t, uint32_t Vector) {
 
 void Emulator::ExceptionHook(uint32_t,
 	uint32_t Vector, uint32_t ErrorCode) {
-	// https://wiki.osdev.org/Exceptions
-	std::print("ExceptionHook: Vector({:#x}), ErrorCode({:#x})\n",
+
+	BochsDbg("ExceptionHook: Vector({:#x}), ErrorCode({:#x})\n",
 		Vector, ErrorCode);
 }
 
@@ -404,6 +458,189 @@ void Emulator::TlbControlHook(uint32_t,
 
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
 	return g_Debugger.GetPhysicalPage(PhysicalAddress);
+}
+
+using BochscpuGetReg_t = uint64_t(*)(bochscpu_cpu_t);
+static const std::unordered_map<Registers_t, BochscpuGetReg_t>
+RegisterMappingGetters = { 
+	{Registers_t::Rax, bochscpu_cpu_rax},
+	{Registers_t::Rbx, bochscpu_cpu_rbx},
+	{Registers_t::Rcx, bochscpu_cpu_rcx},
+	{Registers_t::Rdx, bochscpu_cpu_rdx},
+	{Registers_t::Rsi, bochscpu_cpu_rsi},
+	{Registers_t::Rdi, bochscpu_cpu_rdi},
+	{Registers_t::Rip, bochscpu_cpu_rip},
+	{Registers_t::Rsp, bochscpu_cpu_rsp},
+	{Registers_t::Rbp, bochscpu_cpu_rbp},
+	{Registers_t::R8, bochscpu_cpu_r8},
+	{Registers_t::R9, bochscpu_cpu_r9},
+	{Registers_t::R10, bochscpu_cpu_r10},
+	{Registers_t::R11, bochscpu_cpu_r11},
+	{Registers_t::R12, bochscpu_cpu_r12},
+	{Registers_t::R13, bochscpu_cpu_r13},
+	{Registers_t::R14, bochscpu_cpu_r14},
+	{Registers_t::R15, bochscpu_cpu_r15},
+	{Registers_t::Rflags, bochscpu_cpu_rflags},
+	{Registers_t::Cr2, bochscpu_cpu_cr2},
+	{Registers_t::Cr3, bochscpu_cpu_cr3} 
+};
+
+
+using BochscpuSetReg_t = void (*)(bochscpu_cpu_t, uint64_t);
+static const std::unordered_map<Registers_t, BochscpuSetReg_t>
+Register64MappingSetters = { 
+	{Registers_t::Rax, bochscpu_cpu_set_rax},
+	{Registers_t::Rbx, bochscpu_cpu_set_rbx},
+	{Registers_t::Rcx, bochscpu_cpu_set_rcx},
+	{Registers_t::Rdx, bochscpu_cpu_set_rdx},
+	{Registers_t::Rsi, bochscpu_cpu_set_rsi},
+	{Registers_t::Rdi, bochscpu_cpu_set_rdi},
+	{Registers_t::Rip, bochscpu_cpu_set_rip},
+	{Registers_t::Rsp, bochscpu_cpu_set_rsp},
+	{Registers_t::Rbp, bochscpu_cpu_set_rbp},
+	{Registers_t::R8,  bochscpu_cpu_set_r8},
+	{Registers_t::R9,  bochscpu_cpu_set_r9},
+	{Registers_t::R10, bochscpu_cpu_set_r10},
+	{Registers_t::R11, bochscpu_cpu_set_r11},
+	{Registers_t::R12, bochscpu_cpu_set_r12},
+	{Registers_t::R13, bochscpu_cpu_set_r13},
+	{Registers_t::R14, bochscpu_cpu_set_r14},
+	{Registers_t::R15, bochscpu_cpu_set_r15},
+	{Registers_t::Rflags, bochscpu_cpu_set_rflags},
+	{Registers_t::Cr2, bochscpu_cpu_set_cr2},
+	{Registers_t::Cr3, bochscpu_cpu_set_cr3} 
+};
+
+using BochscpuSetSegReg_t = void (*)(bochscpu_cpu_t, const bochscpu_cpu_seg_t*);
+static const std::unordered_map<Registers_t, BochscpuSetSegReg_t>
+RegisterSelMappingSetters = {
+	{Registers_t::Cs,   bochscpu_cpu_set_cs},
+	{Registers_t::Ds,   bochscpu_cpu_set_ds},
+	{Registers_t::Es,   bochscpu_cpu_set_es},
+	{Registers_t::Fs,   bochscpu_cpu_set_fs},
+	{Registers_t::Gs,   bochscpu_cpu_set_gs},
+	{Registers_t::Ss,   bochscpu_cpu_set_ss},
+	{Registers_t::Tr,   bochscpu_cpu_set_tr},
+	{Registers_t::Ldtr, bochscpu_cpu_set_ldtr},
+};
+
+using BochscpuGetSegReg_t = void(*)(bochscpu_cpu_t, bochscpu_cpu_seg_t*);
+static const std::unordered_map<Registers_t, BochscpuGetSegReg_t>
+RegisterSelMappingGetters = {
+	{Registers_t::Cs,   bochscpu_cpu_cs},
+	{Registers_t::Ds,   bochscpu_cpu_ds},
+	{Registers_t::Es,   bochscpu_cpu_es},
+	{Registers_t::Fs,   bochscpu_cpu_fs},
+	{Registers_t::Gs,   bochscpu_cpu_gs},
+	{Registers_t::Ss,   bochscpu_cpu_ss},
+	{Registers_t::Tr,   bochscpu_cpu_tr},
+	{Registers_t::Ldtr, bochscpu_cpu_ldtr},
+};
+
+bool Emulator::GetReg(const Registers_t Reg, REGVAL* Value) const {
+	if (RegisterMappingGetters.contains(Reg)) {
+		const BochscpuGetReg_t& Getter = RegisterMappingGetters.at(Reg);
+		Value->Type = REGVAL_TYPE_I64;
+		Value->u.I64 = Getter(Cpu_);
+		return true;
+	}
+
+	if (RegisterSelMappingGetters.contains(Reg)) {
+		// TODO: Handle 8 bit?
+		bochscpu_cpu_seg_t Seg;
+		RegisterSelMappingGetters.at(Reg)(Cpu_, &Seg);
+
+		Value->Type = REGVAL_TYPE_I16;
+		Value->u.I16 = Seg.selector;
+		return true;
+	}
+
+	if (Registers_t::Xmm0 <= Reg && Reg <= Registers_t::Xmm15) {
+		bochscpu_cpu_zmm_t ZmmN;
+		bochscpu_cpu_zmm(Cpu_, Reg - Registers_t::Xmm0, &ZmmN);
+		
+		Value->Type = REGVAL_TYPE_VF128;
+		Value->u.VF128 = ZmmN;
+
+		return true;
+	}
+
+	if (Registers_t::Ymm0 <= Reg && Reg <= Registers_t::Ymm15) {
+		bochscpu_cpu_zmm_t ZmmN;
+		bochscpu_cpu_zmm(Cpu_, Reg - Registers_t::Ymm0, &ZmmN);
+
+		Value->Type = REGVAL_TYPE_VF256;
+		Value->u.VF256 = ZmmN;
+
+		return true;
+	}
+
+	if (Registers_t::Zmm0 <= Reg && Reg <= Registers_t::Zmm31) {
+		Value->Type = REGVAL_TYPE_VF512;
+		static_assert(sizeof(bochscpu_cpu_zmm_t) == sizeof(Value->u.VF512));
+		bochscpu_cpu_zmm(Cpu_, Reg - Registers_t::Zmm0, (bochscpu_cpu_zmm_t*)&Value->u.VF512);
+
+		return true;
+	}
+
+	BochsDbg("There is no mapping for register {:x}.\n", Reg);
+	return false;
+}
+
+bool Emulator::SetReg(const Registers_t Reg,
+	const REGVAL* Value) {
+	
+	if (Register64MappingSetters.contains(Reg) && RegisterMappingGetters.contains(Reg)) {
+		const BochscpuSetReg_t& Setter = Register64MappingSetters.at(Reg);
+		const BochscpuGetReg_t& Getter = RegisterMappingGetters.at(Reg);
+
+		uint64_t original = Getter(Cpu_);
+		uint64_t result = original;
+
+		switch (Value->Type) {
+		case REGVAL_TYPE_I16:
+			result = (original & ~0xFFFFull) | (Value->u.I16 & 0xFFFF);
+			break;
+
+		case REGVAL_TYPE_I32:
+			result = (original & ~0xFFFFFFFFull) | (Value->u.I32 & 0xFFFFFFFF);
+			break;
+
+		case REGVAL_TYPE_I64:
+			result = Value->u.I64;
+			break;
+
+		default:
+			std::println("[!] Unsupported REGVAL type {} for register write", static_cast<int>(Value->Type));
+			return false;
+		}
+
+		Setter(Cpu_, result);
+		return true;
+	}
+
+	if (RegisterSelMappingSetters.contains(Reg) && RegisterSelMappingGetters.contains(Reg)) {
+		// TODO: Handle 8 bit?
+		bochscpu_cpu_seg_t Seg;
+		RegisterSelMappingGetters.at(Reg)(Cpu_, &Seg);
+
+		Seg.selector = Value->u.I16;
+		RegisterSelMappingSetters.at(Reg)(Cpu_, &Seg);
+
+		return true;
+	}
+
+	std::print("There is no mapping for register {:#x}.\n", (int)Reg);
+	return false;
+}
+
+void Emulator::Reset() {
+	MappedPhyPages_.clear();
+	DirtiedPage_.clear();
+	ExecEndAddress_		= 0;
+	InitialCr3_			= 0;
+	InstructionLimit_	= 0;
+	bochscpu_cpu_delete(Cpu_);
 }
 
 void Emulator::LoadState(const CpuState_t& State) {

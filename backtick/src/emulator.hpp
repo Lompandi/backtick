@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <unordered_set>
 #include <unordered_map>
 
 #include <bochscpu.hpp>
@@ -16,6 +17,8 @@ public:
 	void Run(const std::uint64_t EndAddress = 0);
 
 	void Stop(int value) const { bochscpu_cpu_stop(Cpu_); }
+
+	void Reset();
 
 	const std::uint8_t* GetPhysicalPage(const std::uint64_t PhysicalAddress) const;
 
@@ -48,7 +51,15 @@ public:
 
 	bool DirtyGpaPage(const std::uint64_t Gpa);
 
-	const auto& GetDirtedPage() const { return DirtiedPage_; }
+	const auto GetDirtedPage() const { return &DirtiedPage_; }
+
+	bool SetReg(const Registers_t Reg, const REGVAL* Value);
+
+	bool GetReg(const Registers_t Reg, REGVAL* Value) const;
+
+	bool IsGvaMapped(std::uint64_t VirtualAddress) const;
+
+	bool RunFromStatus(ULONG Status);
 
 private:
 	void LoadState(const CpuState_t& State);
@@ -108,17 +119,23 @@ private:
 
 	bochscpu_hooks_t* HookChain_[2] = {};
 
+	std::uint64_t InstructionExecutedCount_;
+
 	std::uint64_t InstructionLimit_;
 
 	std::uint64_t InitialCr3_ = 0;
 
 	std::uint64_t ExecEndAddress_ = 0;
 
+	std::unordered_set<std::uint64_t> MappedPhyPages_;
+
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DirtiedPage_;
+
+	bool Active_ = false;
 };
 
 using TimeFrames_t = std::map<unsigned int, CpuState_t>;
 
-extern Emulator* g_Emulator;
+extern Emulator g_Emulator;
 
 extern TimeFrames_t g_TimeFrames;

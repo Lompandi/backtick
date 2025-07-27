@@ -133,6 +133,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <AdditionalIncludeDirectories>.\src\libs\bochscpu-ffi\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -149,6 +150,7 @@
     <ClInclude Include="src\debugger.hpp" />
     <ClInclude Include="src\emulator.hpp" />
     <ClInclude Include="src\globals.hpp" />
+    <ClInclude Include="src\hooks.hpp" />
     <ClInclude Include="src\libs\bochscpu-ffi\include\bochscpu.hpp" />
     <ClInclude Include="src\paging.hpp" />
     <ClInclude Include="src\utils.hpp" />
@@ -164,6 +166,7 @@
     <ClCompile Include="src\debugger.cpp" />
     <ClCompile Include="src\emulator.cpp" />
     <ClCompile Include="src\globals.cpp" />
+    <ClCompile Include="src\hooks.cpp" />
     <ClCompile Include="src\utils.cpp" />
   </ItemGroup>
   <ItemGroup>

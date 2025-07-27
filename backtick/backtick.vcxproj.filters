@@ -39,6 +39,9 @@
     <ClInclude Include="src\emulator.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\hooks.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -57,6 +60,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\emulator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hooks.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

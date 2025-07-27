@@ -5,7 +5,6 @@
 #include <unordered_map>
 
 #include "../pch.h"
-#include "globals.hpp"
 
 namespace fs = std::filesystem;
 
@@ -17,6 +16,17 @@ struct uint128_t {
 		memcpy(this, &Other.F128Bytes, 16);
 	}
 };
+
+struct PFNEntry {
+	USHORT ReferenceCount;
+	USHORT ShareCount;
+	USHORT Flags;
+	ULONG64 PteAddress;
+	ULONG64 OriginalPteValue;
+};
+
+struct CpuState_t;
+struct Seg_t;
 
 class Debugger_t {
 public:
@@ -48,24 +58,28 @@ public:
 
 	void Print(const char* Msg);
 
+	bool ReadVirtualMemory(const std::uint64_t VirtualAddress, const void* Buffer, std::size_t Size) const;
+
 	bool ReadPhysicalMemory(const std::uint64_t PhysicalAddress, const void* Buffer, std::size_t Size);
 
 	bool WritePhysicalMemory(const std::uint64_t PhysicalAddress, const void* Buffer, std::size_t Size);
 
 	const std::uint8_t* GetPhysicalPage(const std::uint64_t PhysicalAddress);
 
-	// bool DumpCpuState(CpuState_t& State) const;
-
 	bool DumpCpuState(CpuState_t& State) const;
 
 	bool LoadCpuState(const CpuState_t& State);
+
+	Seg_t GdtEntry(std::uint64_t Base, std::uint16_t Limit, std::uint64_t Selector) const;
+
+	bool SetReg64(std::string_view Name, std::uint64_t Value);
 
 	std::unordered_map<std::string, std::uint64_t>
 		Regs64(const std::vector<std::string_view>& Targets) const;
 
 	std::uint64_t Reg64(std::string_view Name) const;
 
-	std::unordered_map<std::string, DEBUG_VALUE>
+	std::vector<DEBUG_VALUE>
 		Regs(const std::vector<std::string_view>& Targets) const;
 
 	std::uint64_t Msr(std::uint32_t Index) const;
@@ -81,6 +95,135 @@ private:
 };
 
 extern Debugger_t g_Debugger;
+
+enum Registers_t {
+	Rax = 1,
+	Rbx,
+	Rcx,
+	Rdx,
+	Rsi,
+	Rdi,
+	Rsp,
+	Rbp,
+	Rip,
+	Rflags,
+	Cs,
+	Ds,
+	Es,
+	Fs,
+	Gs,
+	Ss,
+	R8,
+	R9,
+	R10,
+	R11,
+	R12,
+	R13,
+	R14,
+	R15,
+	Cr0,
+	Cr2,
+	Cr3,
+	Cr4,
+	Cr8,
+	Dr0,
+	Dr1,
+	Dr2,
+	Dr3,
+	Dr6,
+	Dr7,
+	Gdtr,
+	Gdtl,
+	Idtr,
+	Idtl,
+	Tr,
+	Ldtr,
+	XCr0 = 0x31,
+	Fpcw,
+	Fpsw,
+	Fptw,
+	St0,
+	St1,
+	St2,
+	St3,
+	St4,
+	St5,
+	St6,
+	St7,
+	Mm0,
+	Mm1,
+	Mm2,
+	Mm3,
+	Mm4,
+	Mm5,
+	Mm6,
+	Mm7,
+	Mxcsr,
+	Xmm0 = 0x46,
+	Xmm1,
+	Xmm2,
+	Xmm3,
+	Xmm4,
+	Xmm5,
+	Xmm6,
+	Xmm7,
+	Xmm8,
+	Xmm9,
+	Xmm10,
+	Xmm11,
+	Xmm12,
+	Xmm13,
+	Xmm14,
+	Xmm15,
+	Ymm0 = 0x64,
+	Ymm1,
+	Ymm2,
+	Ymm3,
+	Ymm4,
+	Ymm5,
+	Ymm6,
+	Ymm7,
+	Ymm8,
+	Ymm9,
+	Ymm10,
+	Ymm11,
+	Ymm12,
+	Ymm13,
+	Ymm14,
+	Ymm15,
+	Zmm0 = 0x74,
+	Zmm1,
+	Zmm2,
+	Zmm3,
+	Zmm4,
+	Zmm5,
+	Zmm6,
+	Zmm7,
+	Zmm8,
+	Zmm9,
+	Zmm10,
+	Zmm11,
+	Zmm12,
+	Zmm13,
+	Zmm14,
+	Zmm15,
+	Zmm16,
+	Zmm17,
+	Zmm18,
+	Zmm19,
+	Zmm20,
+	Zmm21,
+	Zmm22,
+	Zmm23,
+	Zmm24,
+	Zmm25,
+	Zmm26,
+	Zmm27,
+	Zmm28,
+	Zmm29,
+	Zmm30,
+	Zmm31,
+};
 
 // IA32_MSRS
 namespace msr {

@@ -3,4 +3,5 @@ LIBRARY "WINDBG.DLL"
 EXPORTS
     WinDbgExtensionDllInit
     ExtensionApiVersion
-    saveframe
+    shadow
+    unshadow

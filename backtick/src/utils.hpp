@@ -13,4 +13,6 @@ constexpr std::uint64_t AlignPage(std::uint64_t Address) {
 
 void Hexdump(const void* data, size_t size);
 
+struct CpuState_t;
+
 bool LoadCpuStateFromJSON(CpuState_t& CpuState, const fs::path& CpuStatePath);

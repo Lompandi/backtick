@@ -1,6 +1,5 @@
 
 #include <iostream>
-#include <fmt/format.h>
 
 #include "pch.h"
 
@@ -9,6 +8,7 @@
 #include "src/globals.hpp"
 #include "src/paging.hpp"
 #include "src/utils.hpp"
+#include "src/hooks.hpp"
 
 void WINAPI WinDbgExtensionDllInit(
     PWINDBG_EXTENSION_APIS ExtensionApis,
@@ -17,6 +17,11 @@ void WINAPI WinDbgExtensionDllInit(
     
     if (!g_Debugger.Init()) {
         std::println("Failed to initialize debugger instance.\n");
+        return;
+    }
+
+    if (!g_Hooks.Init()) {
+        std::println("Failed to initialize hooks.\n");
         return;
     }
 }
@@ -41,25 +46,61 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     return TRUE;
 }
 
-DECLARE_API(saveframe) {
+DECLARE_API(shadow) {
+    if (!g_Hooks.Enable()) {
+        std::println("[-] Failed to initialize shadow mode.");
+        return;
+    }
+
+    std::println("[*] Debugger commands are now partially under plugin's control.");
+
+    //
+    // Prepare emulator cpu state for further operations.
+    //
+    CpuState_t CurrentState; // TODO: Fetch the current CPU state.
+    g_Emulator.Initialize(CurrentState);
+
+    InShadowState = true;
+}
+
+DECLARE_API(unshadow) {
+    if (!g_Hooks.Restore()) {
+        std::println("[-] Failed to restore from shadow state.");
+        return;
+    }
+
+    std::println("[*] Returning to original debugger state");
+    
+    //
+    // Reset emulator's state
+    //
+    g_Emulator.Reset();
+    
+    InShadowState = false;
+}
+
+
+/*DECLARE_API(saveframe) {
     std::istringstream Stream(args);
     std::uint32_t Index;
     std::uint64_t End;
+
+    //DEBUG
 
     if (!(Stream >> std::hex >> Index >> End)) {
         std::println("Usuage: !saveframe <index> <end>");
         return;
     }
 
-    std::print("Saving frame... \n");
+    std::print("Saving frame... ");
 
     CpuState_t CurrentCpuState;
     //DEBUG
-    LoadCpuStateFromJSON(CurrentCpuState, R"(D:\baddriversnapshot\state.26100.1.amd64fre.ge_release.240331-1435.20250724_2240\regs.json)");
+    LoadCpuStateFromJSON(CurrentCpuState, R"(C:\Users\seant\Downloads\snapshot-test\state.26100.1.amd64fre.ge_release.240331-1435.20250726_1218\regs.json)");
+    // g_Debugger.LoadCpuState(CurrentCpuState);
 
-    Emulator Emu;
-    Emu.Initialize(CurrentCpuState);
-    Emu.Run(End);
+    g_Emulator.Initialize(CurrentCpuState);
+    g_Emulator.Run(End);
 
     g_TimeFrames[Index] = CurrentCpuState;
 
@@ -80,20 +121,16 @@ DECLARE_API(frame) {
         return;
     }
 
-    if (!g_Emulator) {
-        std::println("No active timeframe instance");
-        return;
-    }
-
     //
     // TODO: Currently this will only set the state to previous emulation session,
     // if we want to add a jump-to-demand time frame design we need to change the code here.
     //
-    for (const auto& DirtiedPage : g_Emulator->GetDirtedPage()) {
-        g_Debugger.WritePhysicalMemory(DirtiedPage.first, DirtiedPage.second.get(), Page::Size);
-        // DEBUG
-        std::println("[*] Restoring page @ {:#010x}", DirtiedPage.first);
-    }
+
+    // std::println("[*] Restoring dirtied pages...");
+
+    g_Emulator.RestoreDirtiedPage();
+
+    // std::println("[*] Restoring CPU state...");
 
     g_Debugger.LoadCpuState(g_TimeFrames.at(Index));
-}
+}*/

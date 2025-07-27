@@ -2,6 +2,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#include "globals.hpp"
 #include "utils.hpp"
 
 namespace json = nlohmann;

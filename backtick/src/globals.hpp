@@ -1,12 +1,20 @@
 #pragma once
 
+#include <array>
+
 #include "../pch.h"
+#include "utils.hpp"
 
 #include <bochscpu.hpp>
 
 extern EXT_API_VERSION g_ExtApiVersion;
 
 extern WINDBG_EXTENSION_APIS ExtensionApis;
+
+//
+// Determin whether the user is currently in shadow state where emulator operation is accessable.
+//
+extern bool InShadowState;
 
 union MMPTE_HARDWARE {
     struct {
@@ -51,6 +59,8 @@ struct Zmm_t {
 
     Zmm_t() { memset(this, 0, sizeof(decltype(*this))); }
 
+    Zmm_t(const DEBUG_VALUE& Val) { memcpy(this, &Val.F128Bytes, 16); }
+
     bool operator==(const Zmm_t& B) const {
         bool Equal = true;
         for (size_t Idx = 0; Idx < 8; Idx++) {
@@ -59,6 +69,49 @@ struct Zmm_t {
         return Equal;
     }
 };
+
+template <typename T>
+bool ExtractBit(const T& data, unsigned int bit_pos) {
+    if constexpr (std::is_integral_v<T>) {
+        if (bit_pos >= sizeof(T) * 8)
+            throw std::out_of_range("bit_pos out of range");
+        return (static_cast<std::make_unsigned_t<T>>(data) >> bit_pos) & 1u;
+    }
+    else {
+        static_assert(std::is_same_v<typename T::value_type, uint8_t>, "Container must hold uint8_t");
+
+        if (bit_pos >= data.size() * 8)
+            throw std::out_of_range("bit_pos out of range");
+
+        size_t byte_index = bit_pos / 8;
+        size_t bit_index = bit_pos % 8;
+
+        return (data[byte_index] >> bit_index) & 1u;
+    }
+}
+
+template <typename Container>
+uint64_t ExtractBits(const Container& data, unsigned int from, unsigned int to) {
+    if (from > to) throw std::out_of_range("Invalid bit range");
+    if (to >= data.size() * 8) throw std::out_of_range("Bit range exceeds data size");
+
+    unsigned int start_byte = from / 8;
+    unsigned int end_byte = to / 8;
+    unsigned int num_bytes = end_byte - start_byte + 1;
+
+    if (num_bytes > 8)
+        throw std::out_of_range("Bit range too large to fit in uint64_t");
+
+    uint64_t val = 0;
+    std::memcpy(&val, &data[start_byte], num_bytes);
+
+    unsigned int bit_offset = from % 8;
+    unsigned int width = to - from + 1;
+
+    val >>= bit_offset;
+    uint64_t mask = (uint64_t(1) << width) - 1;
+    return val & mask;
+}
 
 struct Seg_t {
     uint16_t Selector;
@@ -82,6 +135,23 @@ struct Seg_t {
 
     Seg_t() { memset(this, 0, sizeof(decltype(*this))); }
 
+    Seg_t(std::uint64_t Sel, std::array<std::uint8_t, 16>& Value) {
+        Limit    = ExtractBits(Value, 0, 15)  | (ExtractBits(Value, 48, 51) << 16);
+        Base     = ExtractBits(Value, 16, 39) | (ExtractBits(Value, 56, 63) << 24);
+        Attr     = ExtractBits(Value, 40, 55);
+        Selector = Sel;
+
+        bool NonSystem = ExtractBit(Value, 44);
+        if (!NonSystem) {
+            Base |= ExtractBits(Value, 64, 95);
+        }
+
+        bool Granularity = ExtractBit(Value, 55);
+        auto Increment = Granularity ? 0x1000 : 1;
+        Limit *= Increment;
+        Limit += Granularity ? 0xfff : 0;
+    }
+
     bool operator==(const Seg_t& B) const {
         bool Equal = Attr == B.Attr;
         Equal = Equal && Base == B.Base;
@@ -97,6 +167,9 @@ struct GlobalSeg_t {
     uint16_t Limit;
 
     GlobalSeg_t() { memset(this, 0, sizeof(decltype(*this))); }
+
+    GlobalSeg_t(std::uint64_t B, std::uint16_t Lim)
+        : Base(B), Limit(Lim) { }
 
     bool operator==(const GlobalSeg_t& B) const {
         bool Equal = Base == B.Base;
@@ -524,4 +597,55 @@ struct CpuState_t {
     uint64_t Ssp;
 
     CpuState_t() { memset(this, 0, sizeof(decltype(*this))); }
+};
+
+//
+// _REGVAL structure reversed from dbgeng.dll
+//
+
+
+enum RegValType {
+    REGVAL_TYPE_I32 = 0,
+    REGVAL_TYPE_I16 = 2, 
+    REGVAL_TYPE_I64 = 6,
+    REGVAL_TYPE_FLOAT80 = 0xa,
+    REGVAL_TYPE_VF128 = 0xe,
+    REGVAL_TYPE_VF256,
+    REGVAL_TYPE_VF512,
+};
+
+union Float128 {
+    float f[4];
+    std::uint8_t Bytes[16];
+
+    Float128(const Zmm& Z) { memcpy(this, &Z, sizeof(decltype(*this))); }
+};
+
+union Float256 {
+    float f[8];
+    std::uint8_t Bytes[32];
+
+    Float256(const Zmm& Z) { memcpy(this, &Z, sizeof(decltype(*this))); }
+};
+
+union Float512 {
+    float f[16];
+    std::uint8_t Bytes[64];
+};
+
+struct REGVAL {
+    RegValType  Type;
+    union {
+        uint16_t I16;
+        float    F32;
+        uint32_t I32;
+        uint64_t I64;
+        double   F64;
+        Float80  F80;
+        Float128 VF128;
+        Float256 VF256;
+        Float512 VF512;
+    } u;
+
+    std::string ToString() const;
 };

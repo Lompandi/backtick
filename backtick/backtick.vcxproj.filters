@@ -51,6 +51,9 @@
     <ClInclude Include="src\libs\detours\include\syelog.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\cmdparsing.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -72,6 +75,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\hooks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\cmdparsing.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

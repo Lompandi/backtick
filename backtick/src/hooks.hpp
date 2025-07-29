@@ -3,6 +3,8 @@
 
 #include <unordered_map>
 
+extern bool SkipEventWait;
+
 class Hooks {
 public:
 

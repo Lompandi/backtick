@@ -1,4 +1,5 @@
 
+#include "utils.hpp"
 #include "globals.hpp"
 
 EXT_API_VERSION g_ExtApiVersion = { 1,1,EXT_API_VERSION_NUMBER, 0 };
@@ -44,4 +45,36 @@ std::string REGVAL::ToString() const {
     default:
         return "<invalid>";
     }
+}
+
+Seg_t Seg_t::FromDescriptor(std::uint64_t Selector, const std::array<std::uint8_t, 16>& Value) {
+    auto Limit = uint32_t(ExtractBits(Value, 0ull, 15ull) | (ExtractBits(Value, 48ull, 51ull) << 16));
+    auto Base = ExtractBits(Value, 16ull, 39ull) | (ExtractBits(Value, 56ull, 63ull) << 24);
+    auto Present = ExtractBit(Value, 47ull) == 1;
+    auto Attr = uint32_t(ExtractBits(Value, 40ull, 55ull));
+    auto Selector16 = uint16_t(Selector);
+    auto NonSystem = ExtractBit(Value, 44ull);
+    if (NonSystem == 0) {
+        Base |= ExtractBits(Value, 64ull, 95ull) << 32;
+    }
+
+    auto Granularity = ExtractBit(Value, 55ull) == 1;
+    auto Increment = 1;
+    if (Granularity) {
+        Increment = 0x1000;
+    }
+    auto Offset = 0;
+    if (Granularity) {
+        Offset = 0xfff;
+    }
+
+    Limit = Limit * Increment + Offset;
+
+    Seg_t Ret;
+    Ret.Selector = Selector16;
+    Ret.Base     = Base;
+    Ret.Limit    = Limit;
+    Ret.Attr     = Attr;
+
+    return Ret;
 }

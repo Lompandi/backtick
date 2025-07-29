@@ -135,22 +135,7 @@ struct Seg_t {
 
     Seg_t() { memset(this, 0, sizeof(decltype(*this))); }
 
-    Seg_t(std::uint64_t Sel, std::array<std::uint8_t, 16>& Value) {
-        Limit    = ExtractBits(Value, 0, 15)  | (ExtractBits(Value, 48, 51) << 16);
-        Base     = ExtractBits(Value, 16, 39) | (ExtractBits(Value, 56, 63) << 24);
-        Attr     = ExtractBits(Value, 40, 55);
-        Selector = Sel;
-
-        bool NonSystem = ExtractBit(Value, 44);
-        if (!NonSystem) {
-            Base |= ExtractBits(Value, 64, 95);
-        }
-
-        bool Granularity = ExtractBit(Value, 55);
-        auto Increment = Granularity ? 0x1000 : 1;
-        Limit *= Increment;
-        Limit += Granularity ? 0xfff : 0;
-    }
+    static Seg_t FromDescriptor(std::uint64_t Selector, const std::array<std::uint8_t, 16>& Value);
 
     bool operator==(const Seg_t& B) const {
         bool Equal = Attr == B.Attr;

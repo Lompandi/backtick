@@ -66,9 +66,7 @@ public:
 
 	const std::uint8_t* GetPhysicalPage(const std::uint64_t PhysicalAddress);
 
-	bool DumpCpuState(CpuState_t& State) const;
-
-	bool LoadCpuState(const CpuState_t& State);
+	bool LoadCpuStateTo(CpuState_t& State) const;
 
 	Seg_t GdtEntry(std::uint64_t Base, std::uint16_t Limit, std::uint64_t Selector) const;
 
@@ -78,6 +76,8 @@ public:
 		Regs64(const std::vector<std::string_view>& Targets) const;
 
 	std::uint64_t Reg64(std::string_view Name) const;
+	
+	DEBUG_VALUE Reg(std::string_view Name) const;
 
 	std::vector<DEBUG_VALUE>
 		Regs(const std::vector<std::string_view>& Targets) const;

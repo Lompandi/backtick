@@ -8,22 +8,34 @@
 
 Hooks g_Hooks;
 
-constexpr std::uint64_t Amd64MachineInfoVtableOffset = 0x633D60;
+constexpr std::uint64_t Amd64MachineInfoVtableOffset   = 0x633D60;
 constexpr std::uint64_t ConnLiveKernelTargetInfoOffset = 0x64E528;
 constexpr std::uint64_t DbsSplayTreeCacheVtableOffset  = 0x65FDC8;
 
-constexpr std::uint64_t SetExecStepTraceOffset      = 0x4BF240;
-constexpr std::uint64_t SetExecGoOffset             = 0x26337C;
-constexpr std::uint64_t SetExecutionStatusOffset    = 0x10AFE0;
-constexpr std::uint64_t KdContinueOffset            = 0x198E6C;
+constexpr std::uint64_t SetExecStepTraceOffset       = 0x4BF240;
+constexpr std::uint64_t SetExecGoOffset              = 0x26337C;
+constexpr std::uint64_t SetExecutionStatusOffset     = 0x10AFE0;
+constexpr std::uint64_t KdContinueOffset             = 0x198E6C;
+
+constexpr std::uint64_t WaitStateChangeOffset        = 0x1A118C;
 
 constexpr std::uint64_t DbsSplayTreeCacheFlushOffset = 0x487D18;
 
 void* DbsSplayTreeCacheFlushAddress = nullptr;
 
+bool SkipEventWait = false;
+
 constexpr bool HooksDebugging = false;
 
 std::set<std::uint64_t> g_DbsSplayTreeCacheInstanceAddresses;
+
+//
+// Block debugger to send packet to target machine when single-stepping
+// TODO:
+//   - DisableNetworkSendingFunction
+// -> hook DbgKdTransport::WaitForPacket (return 0x80b00005 in normal senario)
+// for early return at dbgeng!DbgKdTransport::WriteDataPacket+0x2c5 (0x18011DE28) ?
+//
 
 template <typename... Args_t>
 void HooksDbg(const char* Format, const Args_t &...args) {
@@ -164,6 +176,22 @@ static HRESULT LiveKernelTargetInfoCached__WriteVirtualHook(void* pThis,
         pThis, ProcessInfo, Address, Buffer, Size, OutSize);
 }
 
+static HRESULT WaitStateChangeHook(
+    void* pThis,
+    void* a2,
+    void* a3,
+    std::int64_t a4,
+    unsigned int* a5,
+    int a6) {
+
+    if (SkipEventWait) {
+        SkipEventWait = false;
+        return S_OK;
+    }
+
+
+}
+
 void Hooks::FlushDbsSplayTreeCache() {
     //
     // Haven't get the memory display instance yet
@@ -190,6 +218,8 @@ bool Hooks::Enable() {
     std::uintptr_t DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
 
     AddJmpHook((void*)(DbgEngBase + SetExecutionStatusOffset), SetExecutionStatusHook);
+
+    // AddJmpHook((void*)(DbgEngBase + WaitStateChangeOffset), WaitStateChangeHook);
 
     return true;
 }
@@ -242,16 +272,16 @@ bool Hooks::Init() {
     DbsSplayTreeCacheFlushAddress = (void*)(DbgEngBase + DbsSplayTreeCacheFlushOffset);
 
     // SetReg Hook
-    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset), 0x44, &SetRegisterValHook);
+    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x44, &SetRegisterValHook);
 
     // GetReg Hook
-    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset), 0x42, &GetRegisterValHook);
+    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x42, &GetRegisterValHook);
 
     // GetPC Hook
-    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset), 0x46, &GetPcHook);
+    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x46, &GetPcHook);
 
     // SetPC Hook
-    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset), 0x47, &SetPcHook);
+    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x47, &SetPcHook);
 
     // ConnLiveKernelTargetInfo::DoResdVirtualMemory Hook
     RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0xC2, &DoReadVirtualMemoryHook);
@@ -259,12 +289,17 @@ bool Hooks::Init() {
     // ConnLiveKernelTargetInfo::DoWriteVirtualMemory
     RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0xC3, &DoWriteVirtualMemoryHook);
 
+
     RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0x1E, &LiveKernelTargetInfoCached__ReadVirtualHook);
 
     // RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0x21, &LiveKernelTargetInfoCached__WriteVirtualHook);
 
+
+
 	return true;
 }
+
+// KdContinue->WaitStateChange
 
 void* Hooks::AddJmpHook(void* target, void* detour) {
     BYTE* src = static_cast<BYTE*>(target);

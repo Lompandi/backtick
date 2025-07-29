@@ -1,3 +1,6 @@
+
+#include <cassert>
+
 #include "../pch.h"
 
 #include "utils.hpp"
@@ -211,107 +214,98 @@ std::uint64_t Debugger_t::Reg64(std::string_view Name) const {
     return RegValue.I64;
 }
 
-Seg_t Debugger_t::GdtEntry(std::uint64_t Base, std::uint16_t Limit, std::uint64_t Selector) const {
-    auto Ti = Selector >> 2 & 1;
+DEBUG_VALUE Debugger_t::Reg(std::string_view Name) const {
+    ULONG Index;
+    if (Registers_->GetIndexByName(Name.data(), &Index) != S_OK) {
+        std::println("Failed to get register {}", Name.data());
+        return { 0 };
+    }
+
+    DEBUG_VALUE RegValue;
+    Registers_->GetValue(Index, &RegValue);
+
+    return RegValue;
+}
+
+Seg_t Debugger_t::GdtEntry(std::uint64_t GdtBase, std::uint16_t GdtLimit, std::uint64_t Selector) const {
+    auto Ti = ExtractBit(Selector, 2ull);
     if (Ti) {
         std::println("Expected a GDT table indicator when reading segment descriptor");
         return {};
     }
 
-    auto Index = Selector >> 3 & ((1ULL << 13) - 1);
-    std::uint64_t GdtLimit = Limit;
-    if ((GdtLimit + 1) % 8 != 0) {
-        std::println("Invalid GDT limit {:#x}", GdtLimit);
+    auto Index = ExtractBits(Selector, 3ull, 15ull);
+
+    auto GdtLimit64 = uint64_t(GdtLimit);
+    assert((GdtLimit64 + 1) % 8 == 0);
+    auto MaxIndex = (GdtLimit64 + 1) / 8;
+    if (Index > MaxIndex) {
+        std::println("The selector {:#x} has an index ({}) larger than the maximum allowed ({})",
+            Selector, Index, MaxIndex);
         return {};
     }
 
-    auto MaxIndex = (GdtLimit + 1) / 8;
-    if(Index >= MaxIndex) {
-        std::println("The selector {:#x} has an index ({:#x}) larger than the maximum allowed ({:#})",
-            Selector,
-            Index,
-            MaxIndex);
+    std::array<std::uint8_t, 16> Descriptor;
+    auto EntryAddr = GdtBase + (Index * 8ull);
+
+    ReadVirtualMemory(EntryAddr, Descriptor.data(), Descriptor.size());
+
+    return Seg_t::FromDescriptor(Selector, Descriptor);
+}
+
+std::uint64_t FptwTranslate(std::uint64_t DbgFptw) {
+    uint64_t Out = 0;
+    for (int BitIndex = 0; BitIndex < 8; BitIndex++) {
+        auto Bits = (DbgFptw >> BitIndex) & 0b1;
+        Out |= (Bits == 1) ? 0b00 : 0b11 << (BitIndex * 2);
     }
 
-    std::array<std::uint8_t, 16> Descriptor;
-
-    const auto EntryAddr = Base + (Index * 8);
-    ReadVirtualMemory(EntryAddr, Descriptor.data(), 16);
-
-    return Seg_t(Selector, Descriptor);
+    return Out;
 }
 
-bool Debugger_t::LoadCpuState(const CpuState_t& State) {
-    SetReg64("rax", State.Rax);
-    SetReg64("rbx", State.Rbx);
-    SetReg64("rcx", State.Rcx);
-    SetReg64("rdx", State.Rdx);
-    SetReg64("rsi", State.Rsi);
-    SetReg64("rdi", State.Rdi);
-    SetReg64("rip", State.Rip);
-    SetReg64("rsp", State.Rsp);
-    SetReg64("rbp", State.Rbp);
-    SetReg64("r8", State.R8);
-    SetReg64("r9", State.R9);
-    SetReg64("r10", State.R10);
-    SetReg64("r11", State.R11);
-    SetReg64("r12", State.R12);
-    SetReg64("r13", State.R13);
-    SetReg64("r14", State.R14);
-    SetReg64("r15", State.R15);
-    SetReg64("fpcw", State.Fpcw);
-    SetReg64("fpsw", State.Fpsw);
-    SetReg64("cr0", State.Cr0.Flags);
-    SetReg64("cr0", State.Cr0.Flags);
-    SetReg64("cr2", State.Cr2);
-    SetReg64("cr3", State.Cr3);
-    SetReg64("cr4", State.Cr4.Flags);
-    SetReg64("cr8", State.Cr8);
-    SetReg64("xcr0", State.Xcr0);
-    SetReg64("dr0", State.Dr0);
-    SetReg64("dr1", State.Dr1);
-    SetReg64("dr2", State.Dr2);
-    SetReg64("dr3", State.Dr3);
-    SetReg64("dr6", State.Dr6);
-    SetReg64("dr7", State.Dr7);
-    SetReg64("mxcsr", State.Mxcsr);
-
-    SetReg64("efl", State.Rflags);
-    SetReg64("fptw", State.Fptw.Value);
-
-    //TODO: fpst, segment and sse.
-   
-    return true;
-}
-
-bool Debugger_t::DumpCpuState(CpuState_t& State) const {
+bool Debugger_t::LoadCpuStateTo(CpuState_t& State) const {
     // TODO: stiol faild while trying to emulate studd using this.
 
-    State.Rax   = Reg64("rax");
-    State.Rbx   = Reg64("rbx");
-    State.Rcx   = Reg64("rcx");
-    State.Rdx   = Reg64("rdx");
-    State.Rsi   = Reg64("rsi");
-    State.Rdi   = Reg64("rdi");
-    State.Rip   = Reg64("rip");
-    State.Rsp   = Reg64("rsp");
-    State.Rbp   = Reg64("rbp");
-    State.R8    = Reg64("r8");
-    State.R9    = Reg64("r9");
-    State.R10   = Reg64("r10");
-    State.R11   = Reg64("r11");
-    State.R12   = Reg64("r12");
-    State.R13   = Reg64("r13");
-    State.R14   = Reg64("r14");
-    State.R15   = Reg64("r15");
-    State.Fpcw  = Reg64("fpcw");
-    State.Fpsw  = Reg64("fpsw");
-    State.Cr0.Flags = Reg64("cr0");
-    State.Cr2   = Reg64("cr2");
-    State.Cr3   = Reg64("cr3");
-    State.Cr4.Flags = Reg64("cr4");
-    State.Cr8   = Reg64("cr8");
-    State.Xcr0  = Reg64("xcr0");
+    State.Rax = Reg64("rax");
+    State.Rbx = Reg64("rbx");
+    State.Rcx = Reg64("rcx");
+    State.Rdx = Reg64("rdx");
+    State.Rsi = Reg64("rsi");
+    State.Rdi = Reg64("rdi");
+    State.Rip = Reg64("rip");
+    State.Rsp = Reg64("rsp");
+    State.Rbp = Reg64("rbp");
+    State.R8  = Reg64("r8");
+    State.R9  = Reg64("r9");
+    State.R10 = Reg64("r10");
+    State.R11 = Reg64("r11");
+    State.R12 = Reg64("r12");
+    State.R13 = Reg64("r13");
+    State.R14 = Reg64("r14");
+    State.R15 = Reg64("r15");
+    State.Rflags      = Reg64("efl");
+    State.Tsc         = Msr(msr::TSC);
+    State.ApicBase    = Msr(msr::APIC_BASE);
+    State.SysenterCs  = Msr(msr::IA32_SYSENTER_CS);
+    State.SysenterEsp = Msr(msr::IA32_SYSENTER_ESP);
+    State.SysenterEip = Msr(msr::IA32_SYSENTER_EIP);
+    State.Pat         = Msr(msr::IA32_PAT);
+    State.Efer        = Msr(msr::IA32_EFER);
+    State.Star        = Msr(msr::IA32_STAR);
+    State.Lstar       = Msr(msr::IA32_LSTAR);
+    State.Cstar       = Msr(msr::IA32_CSTAR);
+    State.Sfmask      = Msr(msr::IA32_FMASK);
+    State.KernelGsBase = Msr(msr::IA32_KERNEL_GSBASE);
+    State.TscAux      = Msr(msr::IA32_TSC_AUX);
+    State.Fpcw = Reg64("fpcw");
+    State.Fpsw = Reg64("fpsw");
+    State.Fptw = FptwTranslate(Reg64("fptw"));
+    State.Cr0 = Reg64("cr0");
+    State.Cr2 = Reg64("cr2");
+    State.Cr3 = Reg64("cr3");
+    State.Cr4 = Reg64("cr4");
+    State.Cr8 = Reg64("cr8");
+    State.Xcr0 = Reg64("xcr0");
     State.Dr0 = Reg64("dr0");
     State.Dr1 = Reg64("dr1");
     State.Dr2 = Reg64("dr2");
@@ -319,58 +313,44 @@ bool Debugger_t::DumpCpuState(CpuState_t& State) const {
     State.Dr6 = Reg64("dr6");
     State.Dr7 = Reg64("dr7");
     State.Mxcsr = Reg64("mxcsr");
-
-    State.Rflags = Reg64("efl");
-    State.Fptw   = Reg64("fptw");
-    State.Fpop   = 0;
     State.MxcsrMask = 0xffbf;
+    State.Fpop = 0;
+    State.CetControlU = 0;
+    State.CetControlS = 0;
+    State.Pl0Ssp = 0;
+    State.Pl1Ssp = 0;
+    State.Pl2Ssp = 0;
+    State.Pl3Ssp = 0;
+    State.InterruptSspTable = 0;
+    State.Ssp = 0;
 
-    const auto& Fpst = Regs({
-        "st0", "st1", "st2", "st3", "st4", "st5", "st6", "st7"
-    });
+    State.Gdtr.Base = Reg64("gdtr");
+    State.Gdtr.Limit = Reg64("gdtl");
 
-    for (auto i = 0; i < Fpst.size(); i++) {
-        State.Fpst[i] = Fpst[i];
-    }
+    State.Idtr.Base = Reg64("idtr");
+    State.Idtr.Limit = Reg64("idtl");
 
-    State.Tsc           = Msr(msr::TSC);
-    State.ApicBase      = Msr(msr::IA32_APIC_BASE);
-    State.SysenterCs    = Msr(msr::IA32_SYSENTER_CS);
-    State.SysenterEsp   = Msr(msr::SYSENTER_ESP_MSR);
-    State.SysenterEip   = Msr(msr::SYSENTER_EIP_MSR);
-    State.Pat           = Msr(msr::IA32_PAT);
-    State.Efer          = Msr(msr::IA32_EFER);
-    State.Star          = Msr(msr::IA32_STAR);
-    State.Lstar         = Msr(msr::IA32_LSTAR);
-    State.Cstar         = Msr(msr::IA32_CSTAR);
-    State.Sfmask        = Msr(msr::IA32_FMASK);
-    State.KernelGsBase  = Msr(msr::IA32_KERNEL_GSBASE);
-    State.TscAux        = Msr(msr::IA32_TSC_AUX);
+    std::uint64_t GdtBase = State.Gdtr.Base;
+    std::uint64_t GdtLimit = State.Gdtr.Limit;
 
-    std::uint64_t GdtBase = Reg64("gdtr");
-    std::uint16_t GdtLimit = Reg64("gdtl");
+#define GET_SEG(_Seg_) \
+    GdtEntry(GdtBase, GdtLimit, Reg64(#_Seg_))
 
-    State.Gdtr = GlobalSeg_t(Reg64("gdtr"), Reg64("gdtl"));
-    State.Idtr = GlobalSeg_t(Reg64("idtr"), Reg64("idtl"));
-
-    State.Es    = GdtEntry(GdtBase, GdtLimit, Reg64("es"));
-    State.Cs    = GdtEntry(GdtBase, GdtLimit, Reg64("cs"));
-    State.Ss    = GdtEntry(GdtBase, GdtLimit, Reg64("ss"));
-    State.Ds    = GdtEntry(GdtBase, GdtLimit, Reg64("ds"));
-    State.Tr    = GdtEntry(GdtBase, GdtLimit, Reg64("tr"));
-    State.Gs    = GdtEntry(GdtBase, GdtLimit, Reg64("gs"));
-    State.Fs    = GdtEntry(GdtBase, GdtLimit, Reg64("fs"));
-    State.Ldtr  = GdtEntry(GdtBase, GdtLimit, Reg64("ldtr"));
+    State.Es = GET_SEG(es);
+    State.Cs = GET_SEG(cs);
+    State.Ss = GET_SEG(ss);
+    State.Ds = GET_SEG(ds);
+    State.Tr = GET_SEG(tr);
+    State.Gs = GET_SEG(gs);
+    State.Fs = GET_SEG(fs);
+    State.Ldtr = GET_SEG(ldtr);
 
     State.Gs.Base = Msr(msr::IA32_GS_BASE);
     State.Fs.Base = Msr(msr::IA32_FS_BASE);
 
-    const auto& Sse = Regs({
-        "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9",
-        "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
-    });
-
-    for (int i = 0; i < Sse.size(); i++) {
-        State.Zmm[i] = Sse[i];
+    for (int i = 0; i < 8; i++) {
+        State.Fpst[i] = Reg(std::format("st{}", i));
     }
+
+    return true;
 }

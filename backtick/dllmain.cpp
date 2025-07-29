@@ -46,21 +46,34 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     return TRUE;
 }
 
+std::uint64_t Compare(void* a1, void* a2, size_t size) {
+    auto Ba1 = (uint8_t*)a1;
+    auto Ba2 = (uint8_t*)a2;
+    for (int i = 0; i < size; i++) {
+        if (Ba1[i] != Ba2[i]) {
+            std::println("{:02x} - {:02x}", Ba1[i], Ba2[i]);
+            return i;
+        }
+    }
+
+    return 0;
+}
+
 DECLARE_API(shadow) {
+    //
+    // Prepare emulator cpu state for further operations.
+    //
+    CpuState_t CurrentState; 
+    g_Debugger.LoadCpuStateTo(CurrentState);
+
+    g_Emulator.Initialize(CurrentState);
+
     if (!g_Hooks.Enable()) {
         std::println("[-] Failed to initialize shadow mode.");
         return;
     }
 
     std::println("[*] Debugger commands are now partially under plugin's control.");
-
-    //
-    // Prepare emulator cpu state for further operations.
-    //
-    CpuState_t CurrentState; // TODO: Fetch the current CPU state.
-    LoadCpuStateFromJSON(CurrentState, R"(D:\snapshot_test\state.26100.1.amd64fre.ge_release.240331-1435.20250727_2125\regs.json)");
-    g_Emulator.Initialize(CurrentState);
-
     InShadowState = true;
 }
 

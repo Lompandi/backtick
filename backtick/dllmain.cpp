@@ -1,5 +1,5 @@
 
-#include <iostream>
+#include <fmt/format.h>
 
 #include "pch.h"
 
@@ -9,6 +9,16 @@
 #include "src/paging.hpp"
 #include "src/utils.hpp"
 #include "src/hooks.hpp"
+
+constexpr bool PluginVerbose = false;
+
+template <typename... Args_t>
+void PluginDbg(const char* Format, const Args_t &...args) {
+    if constexpr (PluginVerbose) {
+        fmt::print(fmt::runtime(Format), args...);
+        fmt::print("\n");
+    }
+}
 
 void WINAPI WinDbgExtensionDllInit(
     PWINDBG_EXTENSION_APIS ExtensionApis,
@@ -40,29 +50,17 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     case DLL_PROCESS_ATTACH:
     case DLL_THREAD_ATTACH:
     case DLL_THREAD_DETACH:
-    case DLL_PROCESS_DETACH:
-        break;
+    case DLL_PROCESS_DETACH: {
+    }
     }
     return TRUE;
 }
 
-std::uint64_t Compare(void* a1, void* a2, size_t size) {
-    auto Ba1 = (uint8_t*)a1;
-    auto Ba2 = (uint8_t*)a2;
-    for (int i = 0; i < size; i++) {
-        if (Ba1[i] != Ba2[i]) {
-            std::println("{:02x} - {:02x}", Ba1[i], Ba2[i]);
-            return i;
-        }
-    }
-
-    return 0;
-}
-
 DECLARE_API(shadow) {
     //
-    // Prepare emulator cpu state for further operations.
+    // Prepare emulator cpu state.
     //
+
     CpuState_t CurrentState; 
     g_Debugger.LoadCpuStateTo(CurrentState);
 
@@ -73,84 +71,42 @@ DECLARE_API(shadow) {
         return;
     }
 
-    std::println("[*] Debugger commands are now partially under plugin's control.");
+    std::println("Debugger commands are now partially under plugin's control.");
     InShadowState = true;
 }
 
-DECLARE_API(unshadow) {
-    if (!g_Hooks.Restore()) {
-        std::println("[-] Failed to restore from shadow state.");
+DECLARE_API(tr) {
+    if (!InShadowState) {
+        std::println("[-] Cannot reverse step without entering shadow state");
         return;
     }
 
-    std::println("[*] Returning to original debugger state");
-    
-    //
-    // Reset emulator's state
-    //
-    g_Emulator.Reset();
+    g_Emulator.ReverseStepInto();
+    fmt::println("rip: {:#x}", g_Emulator.Rip());
+}
+
+DECLARE_API(unshadow) {
+    if (!InShadowState) {
+        return;
+    }
 
     //
     // Flush memory display cache to
     // resync the debugger with the actual ram
     //
     g_Hooks.FlushDbsSplayTreeCache();
+
+    if (!g_Hooks.Restore()) {
+        std::println("[-] Failed to restore from shadow state.");
+        return;
+    }
+
+    std::println("Returning to original debugger state");
     
+    //
+    // Reset emulator's state
+    //
+    g_Emulator.Reset();
+
     InShadowState = false;
 }
-
-
-/*DECLARE_API(saveframe) {
-    std::istringstream Stream(args);
-    std::uint32_t Index;
-    std::uint64_t End;
-
-    //DEBUG
-
-    if (!(Stream >> std::hex >> Index >> End)) {
-        std::println("Usuage: !saveframe <index> <end>");
-        return;
-    }
-
-    std::print("Saving frame... ");
-
-    CpuState_t CurrentCpuState;
-    //DEBUG
-    LoadCpuStateFromJSON(CurrentCpuState, R"(C:\Users\seant\Downloads\snapshot-test\state.26100.1.amd64fre.ge_release.240331-1435.20250726_1218\regs.json)");
-    // g_Debugger.LoadCpuState(CurrentCpuState);
-
-    g_Emulator.Initialize(CurrentCpuState);
-    g_Emulator.Run(End);
-
-    g_TimeFrames[Index] = CurrentCpuState;
-
-    std::print("{}\n", Index);
-}
-
-DECLARE_API(frame) {
-    std::istringstream Stream(args);
-    std::uint32_t Index;
-
-    if (!(Stream >> std::hex >> Index)) {
-        std::println("Usuage: !frame <index>");
-        return;
-    }
-
-    if (!g_TimeFrames.contains(Index)) {
-        std::println("Specified time frame doesn't exist");
-        return;
-    }
-
-    //
-    // TODO: Currently this will only set the state to previous emulation session,
-    // if we want to add a jump-to-demand time frame design we need to change the code here.
-    //
-
-    // std::println("[*] Restoring dirtied pages...");
-
-    g_Emulator.RestoreDirtiedPage();
-
-    // std::println("[*] Restoring CPU state...");
-
-    g_Debugger.LoadCpuState(g_TimeFrames.at(Index));
-}*/

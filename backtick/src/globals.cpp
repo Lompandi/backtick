@@ -48,12 +48,12 @@ std::string REGVAL::ToString() const {
 }
 
 Seg_t Seg_t::FromDescriptor(std::uint64_t Selector, const std::array<std::uint8_t, 16>& Value) {
-    auto Limit = uint32_t(ExtractBits(Value, 0ull, 15ull) | (ExtractBits(Value, 48ull, 51ull) << 16));
-    auto Base = ExtractBits(Value, 16ull, 39ull) | (ExtractBits(Value, 56ull, 63ull) << 24);
-    auto Present = ExtractBit(Value, 47ull) == 1;
-    auto Attr = uint32_t(ExtractBits(Value, 40ull, 55ull));
+    auto Limit      = uint32_t(ExtractBits(Value, 0ull, 15ull) | (ExtractBits(Value, 48ull, 51ull) << 16));
+    auto Base       = ExtractBits(Value, 16ull, 39ull) | (ExtractBits(Value, 56ull, 63ull) << 24);
+    auto Present    = ExtractBit(Value, 47ull) == 1;
+    auto Attr       = uint32_t(ExtractBits(Value, 40ull, 55ull));
     auto Selector16 = uint16_t(Selector);
-    auto NonSystem = ExtractBit(Value, 44ull);
+    auto NonSystem  = ExtractBit(Value, 44ull);
     if (NonSystem == 0) {
         Base |= ExtractBits(Value, 64ull, 95ull) << 32;
     }

@@ -39,14 +39,18 @@ public:
         auto originalFunc = reinterpret_cast<TFunc>(it->second);
         return originalFunc(std::forward<TArgs>(args)...);
     }
-
+    
     void* AddJmpHook(void* Address, void* Function);
+
+    void* AddDetour(void* targetFunc, void* detourFunc);
 private:
     std::vector<std::tuple<void**, size_t, void*>> RegisteredHooks_;
 
     std::unordered_map<void*, void*> HookedToOriginal_;
 
     std::unordered_map<void**, void*> Originals_;
+
+    std::unordered_map<void*, void*> DetouredFunctions_;
 
     std::unordered_map<void*, std::vector<std::uint8_t>> PatchedBytes_;
 };

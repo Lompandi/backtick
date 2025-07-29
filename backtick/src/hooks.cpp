@@ -1,5 +1,8 @@
 
+#include <windows.h>
+
 #include <set>
+#include <detours.h>
 #include <fmt/format.h>
 
 #include "hooks.hpp"
@@ -21,13 +24,32 @@ constexpr std::uint64_t WaitStateChangeOffset        = 0x1A118C;
 
 constexpr std::uint64_t DbsSplayTreeCacheFlushOffset = 0x487D18;
 
+constexpr std::uint64_t GetRegValOffset              = 0xA1CC0;
+using GetRegisterVal_t = HRESULT(__fastcall*)(void*, ULONG, REGVAL*);
+static GetRegisterVal_t OriginalGetRegisterVal = nullptr;
+
+struct _ADDR {
+    std::uint64_t Type;
+    std::uint64_t Value1;
+    std::uint64_t Value2;
+    std::uint64_t Unk1;
+};
+
+constexpr std::uint64_t GetPcOffset = 0xA0AD0;
+using GetPc_t = HRESULT(__fastcall*)(std::uint64_t, _ADDR*);
+static GetPc_t OriginalGetPcVal = nullptr;
+
 void* DbsSplayTreeCacheFlushAddress = nullptr;
 
 bool SkipEventWait = false;
 
+uint64_t DbgEngBase = 0;
+
 constexpr bool HooksDebugging = false;
 
 std::set<std::uint64_t> g_DbsSplayTreeCacheInstanceAddresses;
+
+
 
 //
 // Block debugger to send packet to target machine when single-stepping
@@ -59,13 +81,13 @@ static HRESULT SetRegisterValHook(uint64_t pThis, ULONG Index, REGVAL* pRegVal) 
 static HRESULT GetRegisterValHook(void* pThis, ULONG Index, REGVAL* pRegVal) {
     HooksDbg("[*] Reading register {:#x}", Index);
 
-    //TODO:
-    if (!g_Emulator.GetReg((Registers_t)Index, pRegVal)) {
-        using OriginalFunc = HRESULT(__fastcall*)(void* pThis, ULONG Index, REGVAL* pRegVal);
-        return g_Hooks.CallOriginalTyped<OriginalFunc>(&GetRegisterValHook, pThis, Index, pRegVal);
+    if (g_Emulator.GetReg((Registers_t)Index, pRegVal)) {
+        return S_OK;
     }
 
-    return S_OK;
+    return OriginalGetRegisterVal(
+        pThis, Index, pRegVal
+    );
 }
 
 static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* Buffer, uint32_t Size, uint32_t* BytesRead) {
@@ -88,6 +110,13 @@ static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* 
     *BytesRead = Size;
     return S_OK;
 }
+
+// eb address value -> data -> cache
+// db address <-> cache < network > target
+// shadow
+// eb address value -> cache -> emulator
+//unshadow
+//db address ->
 
 static HRESULT DoWriteVirtualMemoryHook(uint64_t pThis, uint64_t WriteAddress, void* Buffer, uint32_t Size, uint32_t* BytesWritten) {
     HooksDbg("[*] Writing {} bytes to {:#x}", Size, WriteAddress);
@@ -118,13 +147,6 @@ static HRESULT SetExecutionStatusHook(std::uint64_t pDebugClient, ULONG Status) 
 
     return S_OK;
 }
-
-struct _ADDR {
-    std::uint64_t Type;
-    std::uint64_t Value1;
-    std::uint64_t Value2;
-    std::uint64_t Unk1;
-};
 
 static HRESULT GetPcHook(std::uint64_t pThis, _ADDR* pAddr) { 
     pAddr->Type = 0x0000000000100028;
@@ -215,11 +237,17 @@ bool Hooks::Enable() {
         HookVtable(Vtable, Index, HookFunc);
     }
 
-    std::uintptr_t DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
+    DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
 
     AddJmpHook((void*)(DbgEngBase + SetExecutionStatusOffset), SetExecutionStatusHook);
 
-    // AddJmpHook((void*)(DbgEngBase + WaitStateChangeOffset), WaitStateChangeHook);
+    OriginalGetPcVal = reinterpret_cast<GetPc_t>(AddDetour(
+        (void*)(DbgEngBase + GetPcOffset), (void*)GetPcHook
+    ));
+
+    OriginalGetRegisterVal = reinterpret_cast<GetRegisterVal_t>(AddDetour(
+        (void*)(DbgEngBase + GetRegValOffset), (void*)GetRegisterValHook
+    ));
 
     return true;
 }
@@ -257,9 +285,19 @@ bool Hooks::Restore() {
     //
     RestorePatchedBytes();
 
-    //
-    // TODO: Clear DbsSplayTreeCache set?
-    //
+    for (auto& [original, detour] : DetouredFunctions_) {
+        void* origPtr = original;
+        if (DetourTransactionBegin() == NO_ERROR &&
+            DetourUpdateThread(GetCurrentThread()) == NO_ERROR &&
+            DetourDetach(&origPtr, detour) == NO_ERROR) {
+            DetourTransactionCommit();
+        }
+        else {
+            std::println("Failed to remove detour for: ");
+        }
+    }
+
+    DetouredFunctions_.clear();
 
     return true;
 }
@@ -275,10 +313,11 @@ bool Hooks::Init() {
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x44, &SetRegisterValHook);
 
     // GetReg Hook
-    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x42, &GetRegisterValHook);
+    // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x42, &GetRegisterValHook);
+
 
     // GetPC Hook
-    RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x46, &GetPcHook);
+    // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x46, &GetPcHook);
 
     // SetPC Hook
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x47, &SetPcHook);
@@ -340,6 +379,21 @@ void* Hooks::AddJmpHook(void* target, void* detour) {
     FlushInstructionCache(GetCurrentProcess(), src, hookLength);
 
     return Trampoline;
+}
+
+void* Hooks::AddDetour(void* targetFunc, void* detourFunc) {
+    void* original = targetFunc;
+    if (DetourTransactionBegin() != NO_ERROR ||
+        DetourUpdateThread(GetCurrentThread()) != NO_ERROR ||
+        DetourAttach(&original, detourFunc) != NO_ERROR ||
+        DetourTransactionCommit() != NO_ERROR) {
+        std::println("Detour attach failed");
+        return nullptr;
+    }
+
+    DetouredFunctions_[targetFunc] = detourFunc;
+    HookedToOriginal_[detourFunc] = targetFunc;
+    return original;
 }
 
 void Hooks::HookVtable(void** vtable, size_t index, void* hookFunc) {

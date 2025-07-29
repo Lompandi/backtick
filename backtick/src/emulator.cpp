@@ -226,9 +226,9 @@ HRESULT Emulator::RunFromStatus(ULONG Status) {
 		// changing register state, so we must set rip to previous one and continue to
 		// the current rip to do a step-over
 		//
-		uint64_t TargetAddress = bochscpu_cpu_rip(Cpu_);
-		bochscpu_cpu_set_rip(Cpu_, PrevRip_);
-		Run(TargetAddress);
+		ExecEndAddress_ = Rip();
+		Run();
+		ExecEndAddress_ = 0ull;
 		break;
 	}
 	case DEBUG_STATUS_STEP_INTO: {
@@ -363,18 +363,15 @@ bool Emulator::VirtWrite1(const std::uint64_t Gva, const std::uint8_t Value) {
 	return VirtWrite(Gva, (std::uint8_t*)&Value, 1);
 }
 
+// ... -> after executing ...
 
 void Emulator::AfterExecutionHook(uint32_t, void*) {
 	InstructionExecutedCount_ += 1;
 
-	//
-	// Check if we exceed execution limit, this is useful when implementing things like
-	// single-stepping
-	//
-	if (InstructionLimit_ && InstructionExecutedCount_ >= InstructionLimit_) {
-		BochsDbg("Reached execution limit, stopping emulator...");
-		Stop(0);
-	}
+	// std::println("[*] Executing {:#x}", Rip());
+
+	PrevPrevRip_ = PrevRip_;
+	PrevRip_ = Rip();
 
 	//
 	// Stop the cpu if we reached end address.
@@ -388,6 +385,14 @@ void Emulator::AfterExecutionHook(uint32_t, void*) {
 void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
 	// TODO
 	// std::println("Executing {:#x}", bochscpu_cpu_rip(Cpu_));
+	//
+	// Check if we exceed execution limit, this is useful when implementing things like
+	// single-stepping
+	//
+	if (InstructionLimit_ && InstructionExecutedCount_ >= InstructionLimit_) {
+		BochsDbg("Reached execution limit, stopping emulator...");
+		Stop(0);
+	}
 }
 
 static std::string Hexdump(const std::uint8_t* Data, std::size_t Size) {
@@ -493,6 +498,8 @@ void Emulator::TlbControlHook(uint32_t,
 void Emulator::CNearBranchHook(uint32_t Cpu, uint64_t Rip,
 	uint64_t NextRip) {
 
+	AddNewCheckPoint();
+
 	if (RunTillBranch_) {
 		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
 		Stop(0);
@@ -501,6 +508,8 @@ void Emulator::CNearBranchHook(uint32_t Cpu, uint64_t Rip,
 
 void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 	uint64_t Rip, uint64_t NextRip) {
+
+	AddNewCheckPoint();
 
 	if (RunTillBranch_) {
 		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
@@ -511,10 +520,25 @@ void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 void Emulator::UcFarBranchHook(uint32_t Cpu, uint32_t What,
 	uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip) {
 
+	AddNewCheckPoint();
+
 	if (RunTillBranch_) {
 		BochsDbg("[*] Reached branch instruction (far), stopping cpu...\n");
 		Stop(0);
 	}
+}
+
+void Emulator::ReverseStepInto() {
+	const auto& PrevState = CheckPoints_.back().CpuState;
+	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
+		VirtWrite(Address, Dirty.data(), Dirty.size());
+	}
+
+	bochscpu_cpu_set_state(Cpu_, &PrevState);
+	std::println("Prevstate: {:#x}", PrevState.rip);
+
+	std::println("[*] End address: {:#x}", PrevPrevRip_);
+	Run(PrevPrevRip_);
 }
 
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
@@ -644,8 +668,17 @@ bool Emulator::GetReg(const Registers_t Reg, REGVAL* Value) const {
 		return true;
 	}
 
-	BochsDbg("There is no mapping for register {:x}.\n", Reg);
+	BochsDbg("There is no mapping for register {:#x}.\n", (uint64_t)Reg);
 	return false;
+}
+
+void Emulator::AddDirtyToCheckPoint(std::uint64_t Address, std::size_t Size) {
+	std::vector<uint8_t> OriginalData(Size);
+	VirtRead(Address, OriginalData.data(), Size);
+
+	if (!CheckPoints_.back().DirtiedBytes_.contains(Address)) {
+		CheckPoints_.back().DirtiedBytes_[Address] = OriginalData;
+	}
 }
 
 bool Emulator::SetReg(const Registers_t Reg,
@@ -709,6 +742,13 @@ void Emulator::Reset() {
 	InitialCr3_			= 0;
 	InstructionLimit_	= 0;
 	bochscpu_cpu_delete(Cpu_);
+}
+
+void Emulator::AddNewCheckPoint() {
+	bochscpu_cpu_state_t State;
+	bochscpu_cpu_state(Cpu_, &State);
+
+	CheckPoints_.push_back(Checkpoint_t{ State, {} });
 }
 
 void Emulator::LoadState(const CpuState_t& State) {
@@ -816,4 +856,5 @@ void Emulator::LoadState(const CpuState_t& State) {
 	}
 
 	bochscpu_cpu_set_state(Cpu_, &Bochs);
+	AddNewCheckPoint();
 }

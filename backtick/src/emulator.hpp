@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <deque>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -13,6 +14,12 @@
 // https://github.com/0vercl0k/wtf/blob/main/src/wtf/bochscpu_backend.cc
 //
 
+
+struct Checkpoint_t {
+	bochscpu_cpu_state_t CpuState;
+	std::unordered_map<std::uint64_t, std::vector<std::uint8_t>> DirtiedBytes_;
+};
+
 class Emulator {
 public:
 	Emulator();
@@ -21,7 +28,7 @@ public:
 
 	void Run(const std::uint64_t EndAddress = 0);
 
-	void Stop(int value) const { bochscpu_cpu_stop(Cpu_); }
+	void Stop(int value) { InstructionExecutedCount_ = 0; bochscpu_cpu_stop(Cpu_); }
 
 	void Reset();
 
@@ -70,9 +77,12 @@ public:
 
 	HRESULT RunFromStatus(ULONG Status);
 
+	void ReverseStepInto();
+
 private:
 	void LoadState(const CpuState_t& State);
-
+	
+	void AddDirtyToCheckPoint(std::uint64_t Address, std::size_t Size);
 
 	void PhyAccessHook(uint32_t,
 		uint64_t PhysicalAddress, uintptr_t Len,
@@ -103,6 +113,8 @@ private:
 
 	void UcFarBranchHook(uint32_t Cpu, uint32_t What,
 		uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip);
+
+	void AddNewCheckPoint();
 
 	static void StaticGpaMissingHandler(const std::uint64_t Gpa);
 
@@ -158,11 +170,16 @@ private:
 
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DirtiedPage_;
 
+	std::uint64_t PrevPrevRip_ = 0;
 	std::uint64_t PrevRip_ = 0;
+
+	std::deque<std::uint64_t> PcTrace_;
 
 	bool RunTillBranch_ = false;
 
 	bool Active_ = false;
+
+	std::vector<Checkpoint_t>       CheckPoints_;
 };
 
 using TimeFrames_t = std::map<unsigned int, CpuState_t>;

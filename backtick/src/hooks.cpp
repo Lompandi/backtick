@@ -104,7 +104,6 @@ static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* 
     // Check whether it is mapped, if not, foward the execution flow to original function
     //
 
-    //TODO
     if (!g_Emulator.IsGvaMapped(ReadAddress)) {
         using OriginalFunc = HRESULT(__fastcall*)(void* pThis, UINT64 ReadAddress, void* Buffer, uint32_t Size, uint32_t* BytesRead);
         return g_Hooks.CallOriginalTyped<OriginalFunc>(&DoReadVirtualMemoryHook, pThis, ReadAddress, Buffer, Size, BytesRead);
@@ -142,15 +141,6 @@ static HRESULT SetExecStepTraceHook(std::uint64_t pThis,
     std::uint64_t a1, const std::uint16_t* a2, std::uint64_t pThreadInfo, 
     int a3, std::uint64_t InternalCmdState) {
 
-
-    return S_OK;
-}
-
-static HRESULT SetExecutionStatusHook(std::uint64_t pDebugClient, ULONG Status) {
-    HooksDbg("[*] Setting execution status: {:#x}", Status);
-    if (!g_Emulator.RunFromStatus(Status)) {
-        return E_INVALIDARG;
-    }
 
     return S_OK;
 }
@@ -242,8 +232,6 @@ bool Hooks::Enable() {
     }
 
     DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
-
-    AddJmpHook((void*)(DbgEngBase + SetExecutionStatusOffset), SetExecutionStatusHook);
 
     OriginalGetPcVal = reinterpret_cast<GetPc_t>(AddDetour(
         (void*)(DbgEngBase + GetPcOffset), (void*)GetPcHook

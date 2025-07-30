@@ -53,9 +53,7 @@ bool ExecuteHook(const std::u16string& Command) {
             std::println("[*] Execution stopped at: {:#x}", g_Emulator.Rip());
         }
         else if (Command == u"gu") {
-            // todo
-
-            std::println("[*] Execution stopped at: {:#x}", g_Emulator.Rip());
+            g_Emulator.GoUp();
         }
         break;
     }

@@ -8,6 +8,7 @@
 #include <bochscpu.hpp>
 
 #include "globals.hpp"
+#include <set>
 
 //
 // Stolen from Axel Souchet - 0verclock's snapshot emulator project :p

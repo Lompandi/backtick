@@ -8,6 +8,7 @@
 #include "hooks.hpp"
 #include "globals.hpp"
 #include "emulator.hpp"
+#include "cmdparsing.hpp"
 
 Hooks g_Hooks;
 
@@ -204,14 +205,40 @@ static HRESULT LiveKernelTargetInfoCached__WriteVirtualHook(void* pThis,
         pThis, ProcessInfo, Address, Buffer, Size, OutSize);
 }
 
-static HRESULT ExecuteCommandHook(struct DebugClient* Client,
-    const unsigned __int16* Command, signed int Length, int a1) {
+static std::string LossyUTF16ToASCII(const std::u16string& utf16) {
+    std::string ascii;
+    ascii.reserve(utf16.size());
+
+    for (char16_t ch : utf16) {
+        if (ch <= 0x7F) {
+            ascii.push_back(static_cast<char>(ch));
+        }
+        else {
+            ascii.push_back('?');
+        }
+    }
+
+    return ascii;
+}
+
+
+/*static HRESULT ExecuteCommandHook(struct DebugClient* Client,
+    const unsigned __int16* Command, signed int a2, int a1) {
 
     std::u16string WCommandString;
-    WCommandString.assign(reinterpret_cast<const char16_t*>(Command), Length);
+    WCommandString.assign(reinterpret_cast<const char16_t*>(Command));
 
+    std::println("Executing Command: {}", LossyUTF16ToASCII(WCommandString));
 
-}
+    return S_OK;
+
+   if (ExecuteHook(WCommandString)) {
+
+        return S_OK;
+   }
+
+    return OriginalExecuteCommand(Client, Command, Length, a1);
+}*/
 
 void Hooks::FlushDbsSplayTreeCache() {
     //
@@ -248,9 +275,9 @@ bool Hooks::Enable() {
         (void*)(DbgEngBase + GetRegValOffset), (void*)GetRegisterValHook
     ));
 
-    OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
+    /*OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
         (void*)(DbgEngBase + ExecuteCommandOffset), (void*)ExecuteCommandHook
-    ));
+    ));*/
 
     return true;
 }

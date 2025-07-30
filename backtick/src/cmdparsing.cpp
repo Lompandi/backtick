@@ -3,21 +3,34 @@
 #include "emulator.hpp"
 #include "globals.hpp"
 
-void ExecuteHook(const std::string& Command) {
-    std::string cmdStr = Command;
+std::string LossyUTF16ToASCII(const std::u16string& utf16) {
+    std::string ascii;
+    ascii.reserve(utf16.size());
+
+    for (char16_t ch : utf16) {
+        if (ch <= 0x7F) {
+            ascii.push_back(static_cast<char>(ch));
+        }
+        else {
+            ascii.push_back('?');
+        }
+    }
+
+    return ascii;
+}
+
+bool ExecuteHook(const std::u16string& Command) {
+    std::u16string cmdStr = Command;
 
     switch (cmdStr[0]) {
     case 'g': {
         // g[a] [= StartAddress] [BreakAddress ... [; BreakCommands]]
-        if (Command == "g" || Command.starts_with("g ") || Command == "ga" ||
-            Command.starts_with("ga ")) {
+        if (Command == u"g" || Command.starts_with(u"g ") || Command == u"ga" ||
+            Command.starts_with(u"ga ")) {
             auto params = ParseGCommand(Command);
 
             if (params.hasStartAddress) {
-                REGVAL* ripVal;
-                ripVal->Type = REGVAL_TYPE_I64;
-                ripVal->u.I64 = params.startAddress;
-                g_Emulator.SetReg(Registers_t::Rip, ripVal);
+                g_Emulator.Rip(params.startAddress);
                 std::println("[*] Starting execution from: {:#x}", params.startAddress);
             }
 
@@ -39,7 +52,7 @@ void ExecuteHook(const std::string& Command) {
 
             std::println("[*] Execution stopped at: {:#x}", g_Emulator.Rip());
         }
-        else if (Command == "gu") {
+        else if (Command == u"gu") {
             REGVAL* rspVal;
             g_Emulator.GetReg(Registers_t::Rsp, rspVal);
             std::uint64_t currentRsp = rspVal->u.I64;
@@ -67,26 +80,29 @@ void ExecuteHook(const std::string& Command) {
     }
     default: {
         std::println("[!] Unknown command!");
+        return false;
     }
     }
+
+    return true;
 }
 
-GCommandParams  ParseGCommand(const std::string& command) {
+GCommandParams  ParseGCommand(const std::u16string& command) {
     GCommandParams params;
 
-    std::string remaining;
-    if (command.starts_with("ga ") || command == "ga") {
+    std::u16string remaining;
+    if (command.starts_with(u"ga ") || command == u"ga") {
         params.useHardwareBreakpoint = true;
-        remaining = command.length() > 3 ? command.substr(3) : "";
+        remaining = command.length() > 3 ? command.substr(3) : u"";
     }
-    else if (command.starts_with("g ") || command == "g") {
-        remaining = command.length() > 2 ? command.substr(2) : "";
+    else if (command.starts_with(u"g ") || command == u"g") {
+        remaining = command.length() > 2 ? command.substr(2) : u"";
     }
     if (remaining.empty()) {
         return params;
     }
 
-    if (auto pos = remaining.find_first_not_of(" \t"); pos != std::string::npos) {
+    if (auto pos = remaining.find_first_not_of(u" \t"); pos != std::string::npos) {
         remaining = remaining.substr(pos);
     }
 
@@ -96,15 +112,15 @@ GCommandParams  ParseGCommand(const std::string& command) {
     }
 
     // start address (=address)
-    if (remaining.starts_with("=")) {
+    if (remaining.starts_with(u"=")) {
         params.hasStartAddress = true;
         auto spacePos = remaining.find(' ', 1);
         if (spacePos != std::string::npos) {
-            params.startAddress = ParseAddress(remaining.substr(1, spacePos - 1));
+            params.startAddress = ParseAddress(LossyUTF16ToASCII(remaining.substr(1, spacePos - 1)));
             remaining = remaining.substr(spacePos + 1);
         }
         else {
-            params.startAddress = ParseAddress(remaining.substr(1));
+            params.startAddress = ParseAddress(LossyUTF16ToASCII(remaining.substr(1)));
             return params;
         }
     }

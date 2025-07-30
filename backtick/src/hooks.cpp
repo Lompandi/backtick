@@ -39,7 +39,13 @@ constexpr std::uint64_t GetPcOffset = 0xA0AD0;
 using GetPc_t = HRESULT(__fastcall*)(std::uint64_t, _ADDR*);
 static GetPc_t OriginalGetPcVal = nullptr;
 
+constexpr std::uint64_t ExecuteCommandOffset = 0x100F10;
+using ExecuteCommand_t = HRESULT(__fastcall*)(struct DebugClient*, const unsigned __int16*, signed int, int);
+static ExecuteCommand_t OriginalExecuteCommand = nullptr;
+
 void* DbsSplayTreeCacheFlushAddress = nullptr;
+
+// 48 e9 ff ff ?? ?? ff ff 
 
 bool SkipEventWait = false;
 
@@ -198,18 +204,11 @@ static HRESULT LiveKernelTargetInfoCached__WriteVirtualHook(void* pThis,
         pThis, ProcessInfo, Address, Buffer, Size, OutSize);
 }
 
-static HRESULT WaitStateChangeHook(
-    void* pThis,
-    void* a2,
-    void* a3,
-    std::int64_t a4,
-    unsigned int* a5,
-    int a6) {
+static HRESULT ExecuteCommandHook(struct DebugClient* Client,
+    const unsigned __int16* Command, signed int Length, int a1) {
 
-    if (SkipEventWait) {
-        SkipEventWait = false;
-        return S_OK;
-    }
+    std::u16string WCommandString;
+    WCommandString.assign(reinterpret_cast<const char16_t*>(Command), Length);
 
 
 }
@@ -247,6 +246,10 @@ bool Hooks::Enable() {
 
     OriginalGetRegisterVal = reinterpret_cast<GetRegisterVal_t>(AddDetour(
         (void*)(DbgEngBase + GetRegValOffset), (void*)GetRegisterValHook
+    ));
+
+    OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
+        (void*)(DbgEngBase + ExecuteCommandOffset), (void*)ExecuteCommandHook
     ));
 
     return true;

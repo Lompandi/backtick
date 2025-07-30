@@ -510,6 +510,10 @@ struct Fptw_t {
     bool operator==(const Fptw_t& Other) const { return Value == Other.Value; }
 };
 
+
+
+// 2816
+// 2752
 struct CpuState_t {
     uint64_t Rax;
     uint64_t Rcx;
@@ -555,10 +559,10 @@ struct CpuState_t {
     uint16_t Fpcw;
     uint16_t Fpsw;
     Fptw_t Fptw;
-    uint16_t Fpop;
+    // uint16_t Fpop;
     Float80 Fpst[8];
     uint32_t Mxcsr;
-    uint32_t MxcsrMask;
+    // uint32_t MxcsrMask;
     uint64_t Tsc;
     Efer_t Efer;
     uint64_t KernelGsBase;
@@ -572,14 +576,14 @@ struct CpuState_t {
     uint64_t Cstar;
     uint64_t Sfmask;
     uint64_t TscAux;
-    uint64_t CetControlU;
-    uint64_t CetControlS;
-    uint64_t Pl0Ssp;
-    uint64_t Pl1Ssp;
-    uint64_t Pl2Ssp;
-    uint64_t Pl3Ssp;
-    uint64_t InterruptSspTable;
-    uint64_t Ssp;
+    // uint64_t CetControlU;
+    // uint64_t CetControlS;
+    // uint64_t Pl0Ssp;
+    // uint64_t Pl1Ssp;
+    // uint64_t Pl2Ssp;
+    // uint64_t Pl3Ssp;
+    // uint64_t InterruptSspTable;
+    // uint64_t Ssp;
 
     CpuState_t() { memset(this, 0, sizeof(decltype(*this))); }
 };

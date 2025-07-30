@@ -8,6 +8,10 @@
 Emulator g_Emulator;
 TimeFrames_t g_TimeFrames;
 
+std::size_t g_LastInstructionExecuted = 0;
+
+bool CreateCheckPoint_ = true;
+
 constexpr bool BochsDebugging = false;
 
 template <typename... Args_t>
@@ -189,6 +193,8 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	Hooks_.cnear_branch_taken = StaticCNearBranchHook;
 	Hooks_.ucnear_branch = StaticUcNearBranchHook;
 
+	CheckPoints_.clear();
+
 	HookChain_[0] = &Hooks_;
 	HookChain_[1] = nullptr;
 
@@ -207,6 +213,7 @@ void Emulator::Run(const std::uint64_t EndAddress) {
 	// Set end point
 	//
 	ExecEndAddress_ = EndAddress;
+	g_LastInstructionExecuted = 0;
 
 	//
 	// Lift off.
@@ -367,11 +374,17 @@ bool Emulator::VirtWrite1(const std::uint64_t Gva, const std::uint8_t Value) {
 
 void Emulator::AfterExecutionHook(uint32_t, void*) {
 	InstructionExecutedCount_ += 1;
+	g_LastInstructionExecuted += 1;
 
 	// std::println("[*] Executing {:#x}", Rip());
 
 	PrevPrevRip_ = PrevRip_;
 	PrevRip_ = Rip();
+
+	if (InstructionExecutedCount_ > MaxiumInstructionLimit_) {
+		std::println("Reached execution limit, stopping");
+		Stop(0);
+	}
 
 	//
 	// Stop the cpu if we reached end address.
@@ -417,7 +430,7 @@ void Emulator::LinAccessHook(uint32_t,
 		return;
 	}
 	
-	BochsDbg("Dirtied GVA: {:#x}", VirtualAddress);
+	BochsDbg("Dirtied GVA: {:#x}\n", VirtualAddress);
 
 	DirtyPhysicalMemoryRange(PhysicalAddress, Len);
 }
@@ -529,16 +542,40 @@ void Emulator::UcFarBranchHook(uint32_t Cpu, uint32_t What,
 }
 
 void Emulator::ReverseStepInto() {
+
 	const auto& PrevState = CheckPoints_.back().CpuState;
 	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
 		VirtWrite(Address, Dirty.data(), Dirty.size());
 	}
 
-	bochscpu_cpu_set_state(Cpu_, &PrevState);
-	std::println("Prevstate: {:#x}", PrevState.rip);
+	// kd -k net:port=50000,key=p.a.s.s,target=172.17.244.81
 
-	std::println("[*] End address: {:#x}", PrevPrevRip_);
+	bochscpu_cpu_set_state(Cpu_, &PrevState);
+
+	CreateCheckPoint_ = false;
+
 	Run(PrevPrevRip_);
+
+	CreateCheckPoint_ = true;
+
+	//
+	// Simulate windbg output
+	//
+
+	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
+		std::println("{}", AddressName);
+	}
+	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
+	std::println("LastInstructionExecuted (after): {:#x}", g_LastInstructionExecuted);
+
+	if (g_LastInstructionExecuted < 3) {
+		if (CheckPoints_.size() == 1) {
+			std::println("Reached backstep end.");
+			return;
+		}
+
+		CheckPoints_.pop_back();
+	}
 }
 
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
@@ -745,6 +782,10 @@ void Emulator::Reset() {
 }
 
 void Emulator::AddNewCheckPoint() {
+	if(!CreateCheckPoint_){
+		return;
+	}
+
 	bochscpu_cpu_state_t State;
 	bochscpu_cpu_state(Cpu_, &State);
 
@@ -805,16 +846,16 @@ void Emulator::LoadState(const CpuState_t& State) {
 	Bochs.dr6 = State.Dr6;
 	Bochs.dr7 = State.Dr7;
 	Bochs.mxcsr = State.Mxcsr;
-	Bochs.mxcsr_mask = State.MxcsrMask;
-	Bochs.fpop = State.Fpop;
-	Bochs.cet_control_u = State.CetControlU;
-	Bochs.cet_control_s = State.CetControlS;
-	Bochs.pl0_ssp = State.Pl0Ssp;
-	Bochs.pl1_ssp = State.Pl1Ssp;
-	Bochs.pl2_ssp = State.Pl2Ssp;
-	Bochs.pl3_ssp = State.Pl3Ssp;
-	Bochs.interrupt_ssp_table = State.InterruptSspTable;
-	Bochs.ssp = State.Ssp;
+	Bochs.mxcsr_mask = 0xffbf;//State.MxcsrMask;
+	Bochs.fpop = 0; // State.Fpop;
+	Bochs.cet_control_u = 0; // State.CetControlU;
+	Bochs.cet_control_s = 0; // State.CetControlS;
+	Bochs.pl0_ssp = 0; // State.Pl0Ssp;
+	Bochs.pl1_ssp = 0; // State.Pl1Ssp;
+	Bochs.pl2_ssp = 0; // State.Pl2Ssp;
+	Bochs.pl3_ssp = 0; // State.Pl3Ssp;
+	Bochs.interrupt_ssp_table = 0; // State.InterruptSspTable;
+	Bochs.ssp = 0; // State.Ssp;
 
 #define SEG(_Bochs_, _Whv_)                                                    \
 	{                                                                            \

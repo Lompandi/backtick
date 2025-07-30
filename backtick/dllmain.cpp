@@ -82,7 +82,6 @@ DECLARE_API(tr) {
     }
 
     g_Emulator.ReverseStepInto();
-    fmt::println("rip: {:#x}", g_Emulator.Rip());
 }
 
 DECLARE_API(unshadow) {

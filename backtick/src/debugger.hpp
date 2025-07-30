@@ -84,6 +84,11 @@ public:
 
 	std::uint64_t Msr(std::uint32_t Index) const;
 
+	std::optional<std::string> Disassemble(std::uint64_t Address);
+
+	const std::string GetName(const uint64_t SymbolAddress,
+		const bool Symbolized);
+
 private:
 	IDebugClient* Client_ = nullptr;
 	IDebugControl* Control_ = nullptr;

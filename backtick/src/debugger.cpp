@@ -183,6 +183,30 @@ std::uint64_t Debugger_t::Msr(std::uint32_t Index) const {
     return Value;
 }
 
+std::optional<std::string> Debugger_t::Disassemble(std::uint64_t Address) {
+    std::string Buffer;
+    Buffer.resize(1024);
+
+    ULONG DisassemblySize = 0;
+    ULONG64 EndOffset = 0;
+
+    if (Control_->Disassemble(
+        Address,
+        DEBUG_DISASM_EFFECTIVE_ADDRESS,
+        Buffer.data(),
+        Buffer.size(),
+        &DisassemblySize,
+        &EndOffset
+    ) == S_FALSE) {
+        // TODO: rezie the buffer and disassemble again
+        std::println("Instruction Output exceed 1024 bytes");
+        return {};
+    }
+
+    Buffer.resize(DisassemblySize);
+    return Buffer;
+}
+
 bool Debugger_t::SetReg64(std::string_view Name, std::uint64_t Value) {
     ULONG Index;
     if (Registers_->GetIndexByName(Name.data(), &Index) != S_OK) {
@@ -212,6 +236,46 @@ std::uint64_t Debugger_t::Reg64(std::string_view Name) const {
     Registers_->GetValue(Index, &RegValue);
 
     return RegValue.I64;
+}
+
+const std::string Debugger_t::GetName(const uint64_t SymbolAddress,
+    const bool Symbolized) {
+
+    const size_t NameSizeMax = MAX_PATH;
+    char Buffer[NameSizeMax];
+    uint64_t Offset = 0;
+
+    if (Symbolized) {
+        const HRESULT Status = Symbols_->GetNameByOffset(
+            SymbolAddress, Buffer, NameSizeMax, nullptr, &Offset);
+        if (FAILED(Status)) {
+            return "";
+        }
+    }
+    else {
+        ULONG Index;
+        ULONG64 Base;
+        HRESULT Status =
+            Symbols_->GetModuleByOffset(SymbolAddress, 0, &Index, &Base);
+
+        if (FAILED(Status)) {
+            return "";
+        }
+
+        ULONG NameSize;
+        Status = Symbols_->GetModuleNameString(DEBUG_MODNAME_MODULE, Index, Base,
+            Buffer, NameSizeMax, &NameSize);
+
+        if (FAILED(Status)) {
+            return "";
+        }
+
+        Offset = SymbolAddress - Base;
+    }
+
+    const auto& SymbolFormat
+        = std::format("{}{}", Buffer, Offset ? std::format("+{:#x}", Offset) : "");
+    return SymbolFormat;
 }
 
 DEBUG_VALUE Debugger_t::Reg(std::string_view Name) const {
@@ -264,8 +328,6 @@ std::uint64_t FptwTranslate(std::uint64_t DbgFptw) {
 }
 
 bool Debugger_t::LoadCpuStateTo(CpuState_t& State) const {
-    // TODO: stiol faild while trying to emulate studd using this.
-
     State.Rax = Reg64("rax");
     State.Rbx = Reg64("rbx");
     State.Rcx = Reg64("rcx");
@@ -313,16 +375,16 @@ bool Debugger_t::LoadCpuStateTo(CpuState_t& State) const {
     State.Dr6 = Reg64("dr6");
     State.Dr7 = Reg64("dr7");
     State.Mxcsr = Reg64("mxcsr");
-    State.MxcsrMask = 0xffbf;
-    State.Fpop = 0;
-    State.CetControlU = 0;
-    State.CetControlS = 0;
-    State.Pl0Ssp = 0;
-    State.Pl1Ssp = 0;
-    State.Pl2Ssp = 0;
-    State.Pl3Ssp = 0;
-    State.InterruptSspTable = 0;
-    State.Ssp = 0;
+    // State.MxcsrMask = 0xffbf;
+    // State.Fpop = 0;
+    // State.CetControlU = 0;
+    // State.CetControlS = 0;
+    // State.Pl0Ssp = 0;
+    // State.Pl1Ssp = 0;
+    // State.Pl2Ssp = 0;
+    // State.Pl3Ssp = 0;
+    // State.InterruptSspTable = 0;
+    // State.Ssp = 0;
 
     State.Gdtr.Base = Reg64("gdtr");
     State.Gdtr.Limit = Reg64("gdtl");

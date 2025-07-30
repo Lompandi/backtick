@@ -160,7 +160,9 @@ private:
 
 	std::uint64_t InstructionExecutedCount_;
 
-	std::uint64_t InstructionLimit_;
+	std::uint64_t MaxiumInstructionLimit_ = 1'500'000;
+
+	std::uint64_t InstructionLimit_ = 0;
 
 	std::uint64_t InitialCr3_ = 0;
 
@@ -178,6 +180,8 @@ private:
 	bool RunTillBranch_ = false;
 
 	bool Active_ = false;
+
+	bool Rewinding_ = false;
 
 	std::vector<Checkpoint_t>       CheckPoints_;
 };

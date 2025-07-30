@@ -15,6 +15,7 @@ void Hexdump(const void* data, size_t size);
 
 struct CpuState_t;
 
+std::uint64_t ScanPattern(const std::vector<int>& pattern, std::uint64_t maxScanLength = 0x1000000);
 
 template <typename T>
 bool ExtractBit(const T& value, std::size_t bitPos) {

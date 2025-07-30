@@ -7,6 +7,24 @@
 
 namespace json = nlohmann;
 
+std::uint64_t ScanPattern(const std::vector<int>& pattern, std::uint64_t maxScanLength = 0x1000000) {
+    std::uint64_t baseAddr = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
+    for (std::uint64_t i = 0; i < maxScanLength; i++) {
+        bool found = true;
+
+        for (size_t j = 0; j < pattern.size(); j++) {
+            if (pattern[j] != -1 && *(std::uint8_t*)(baseAddr + i + j) != pattern[j]) {
+                found = false;
+                break;
+            }
+        }
+
+        if (found) return baseAddr + i;
+    }
+
+    return -1;
+}
+
 void Hexdump(const void* data, size_t size) {
     const unsigned char* byteData = static_cast<const unsigned char*>(data);
     constexpr size_t bytesPerLine = 16;

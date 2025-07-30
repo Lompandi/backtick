@@ -9,6 +9,7 @@
 #include "globals.hpp"
 #include "emulator.hpp"
 #include "cmdparsing.hpp"
+#include <iostream>
 
 Hooks g_Hooks;
 
@@ -276,22 +277,12 @@ bool Hooks::Restore() {
         VirtualProtect(targetAddress, sizeof(void*), oldProtect, &oldProtect);
     }
 
-    //
-    // Remove all tranpoline instruction
-    //
-    RestorePatchedBytes();
-
-    for (auto& [original, detour] : DetouredFunctions_) {
-        void* origPtr = original;
-        if (DetourTransactionBegin() == NO_ERROR &&
-            DetourUpdateThread(GetCurrentThread()) == NO_ERROR &&
-            DetourDetach(&origPtr, detour) == NO_ERROR) {
-            DetourTransactionCommit();
-        }
-        else {
-            std::println("Failed to remove detour for: ");
-        }
-    }
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourDetach(&(PVOID&)OriginalExecuteCommand, ExecuteCommandHook);
+    DetourDetach(&(PVOID&)OriginalGetRegisterVal, GetRegisterValHook);
+    DetourDetach(&(PVOID&)OriginalGetPcVal, GetPcHook);
+    DetourTransactionCommit();
 
     DetouredFunctions_.clear();
 
@@ -334,60 +325,18 @@ bool Hooks::Init() {
 	return true;
 }
 
-// KdContinue->WaitStateChange
-
-void* Hooks::AddJmpHook(void* target, void* detour) {
-    BYTE* src = static_cast<BYTE*>(target);
-    BYTE* dst = static_cast<BYTE*>(detour);
-
-    DWORD oldProtect;
-    const size_t hookLength = 12; // Length of mov rax + jmp rax
-
-    //
-    // Backup original bytes
-    //
-    std::vector<BYTE> originalBytes(src, src + hookLength);
-    PatchedBytes_[target] = originalBytes;
-
-    BYTE* Trampoline = (BYTE*)VirtualAlloc(nullptr, hookLength + 14, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!Trampoline) return nullptr;
-
-    memcpy(Trampoline, src, hookLength);
-
-    uintptr_t jmpBackAddr = (uintptr_t)(src + hookLength);
-    Trampoline[hookLength] = 0x48;                         // mov rax, jmpBackAddr
-    Trampoline[hookLength + 1] = 0xB8;
-    *(uintptr_t*)(Trampoline + hookLength + 2) = jmpBackAddr;
-    Trampoline[hookLength + 10] = 0xFF;                    // jmp rax
-    Trampoline[hookLength + 11] = 0xE0;
-
-    VirtualProtect(src, hookLength, PAGE_EXECUTE_READWRITE, &oldProtect);
-    src[0] = 0x48;
-    src[1] = 0xB8;
-    *(uintptr_t*)(src + 2) = (uintptr_t)dst;
-    src[10] = 0xFF;
-    src[11] = 0xE0;
-
-    //for (size_t i = 12; i < hookLength; ++i)
-      //  src[i] = 0x90;
-
-    VirtualProtect(src, hookLength, oldProtect, &oldProtect);
-    FlushInstructionCache(GetCurrentProcess(), src, hookLength);
-
-    return Trampoline;
-}
-
 void* Hooks::AddDetour(void* targetFunc, void* detourFunc) {
     void* original = targetFunc;
+
     if (DetourTransactionBegin() != NO_ERROR ||
         DetourUpdateThread(GetCurrentThread()) != NO_ERROR ||
         DetourAttach(&original, detourFunc) != NO_ERROR ||
         DetourTransactionCommit() != NO_ERROR) {
-        std::println("Detour attach failed");
+        std::println("Detour attach failed for {}", targetFunc);
         return nullptr;
     }
 
-    DetouredFunctions_[targetFunc] = detourFunc;
+    DetouredFunctions_[targetFunc] = original;
     HookedToOriginal_[detourFunc] = targetFunc;
     return original;
 }

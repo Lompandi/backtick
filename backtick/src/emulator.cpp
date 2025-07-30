@@ -565,7 +565,13 @@ void Emulator::UcFarBranchHook(uint32_t Cpu, uint32_t What,
 	uint16_t Opcode = VirtRead2(Rip);
 	if (IsCallinstruction((uint8_t*)&Opcode) && StepOver_) {
 		auto ReturnAddress = VirtRead8(bochscpu_cpu_rsp(Cpu_));
-		std::println("Call: uc far branch - return to {:#x}", ReturnAddress);
+		InstructionLimit_ = 0;
+		ExecEndAddress_ = ReturnAddress;
+	}
+
+	if (GoingUp_ && IsRetInstruction((uint8_t*)&Opcode)) {
+		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
+		Stop(0);
 	}
 
 	AddNewCheckPoint();
@@ -596,20 +602,17 @@ void Emulator::ReverseStepInto() {
 		VirtWrite(Address, Dirty.data(), Dirty.size());
 	}
 
-	// kd -k net:port=50000,key=p.a.s.s,target=172.17.244.81
-
 	bochscpu_cpu_set_state(Cpu_, &PrevState);
 
 	CreateCheckPoint_ = false;
 
-	Run(PrevRip_);
+	Run(PrevPrevRip_);
 
 	CreateCheckPoint_ = true;
 
 	//
 	// Simulate windbg output
 	//
-
 	g_RelativeOffset -= 1;
 
 	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
@@ -812,7 +815,6 @@ bool Emulator::SetReg(const Registers_t Reg,
 	}
 
 	if (RegisterSelMappingSetters.contains(Reg) && RegisterSelMappingGetters.contains(Reg)) {
-		// TODO: Handle 8 bit?
 		bochscpu_cpu_seg_t Seg;
 		RegisterSelMappingGetters.at(Reg)(Cpu_, &Seg);
 

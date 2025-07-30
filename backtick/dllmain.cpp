@@ -75,15 +75,6 @@ DECLARE_API(shadow) {
     InShadowState = true;
 }
 
-DECLARE_API(tr) {
-    if (!InShadowState) {
-        std::println("[-] Cannot reverse step without entering shadow state");
-        return;
-    }
-
-    g_Emulator.ReverseStepInto();
-}
-
 DECLARE_API(unshadow) {
     if (!InShadowState) {
         return;

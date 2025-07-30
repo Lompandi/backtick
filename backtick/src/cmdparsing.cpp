@@ -53,33 +53,35 @@ bool ExecuteHook(const std::u16string& Command) {
             std::println("[*] Execution stopped at: {:#x}", g_Emulator.Rip());
         }
         else if (Command == u"gu") {
-            REGVAL* rspVal;
-            g_Emulator.GetReg(Registers_t::Rsp, rspVal);
-            std::uint64_t currentRsp = rspVal->u.I64;
-
-            std::uint64_t returnAddr = g_Emulator.VirtRead8(currentRsp);
-            if (returnAddr != 0) {
-                g_Emulator.Run(returnAddr);
-            }
-            else {
-                std::println("[!] Could not determine return address");
-            }
+            // todo
 
             std::println("[*] Execution stopped at: {:#x}", g_Emulator.Rip());
         }
         break;
     }
     case 't': {
+        if (Command.starts_with(u"t-")) {
+            g_Emulator.ReverseStepInto();
+        }
+        else if (Command.starts_with(u"t")) {
+            g_Emulator.StepInto();
+        }
         break;
     }
     case 'p': {
+        if (Command.starts_with(u"p-")) {
+            g_Emulator.ReverseStepOver();
+        }
+        else if (Command.starts_with(u"p")) {
+            g_Emulator.StepOver();
+        }
         break;
     }
     case 'b': {
         break;
     }
     default: {
-        std::println("[!] Unknown command!");
+        // std::println("[!] Unknown command!");
         return false;
     }
     }

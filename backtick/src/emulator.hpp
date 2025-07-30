@@ -75,9 +75,17 @@ public:
 
 	bool IsGvaMapped(std::uint64_t VirtualAddress) const;
 
-	HRESULT RunFromStatus(ULONG Status);
+	// HRESULT RunFromStatus(ULONG Status);
 
 	void ReverseStepInto();
+
+	void ReverseStepOver();
+
+	void GoUp();
+
+	void StepInto();
+
+	void StepOver();
 
 private:
 	void LoadState(const CpuState_t& State);
@@ -179,9 +187,9 @@ private:
 
 	bool RunTillBranch_ = false;
 
-	bool Active_ = false;
+	bool GoingUp_ = false; //stop after return
 
-	bool Rewinding_ = false;
+	bool StepOver_ = false;
 
 	std::vector<Checkpoint_t>       CheckPoints_;
 };

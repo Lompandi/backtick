@@ -3,11 +3,10 @@
 #include "emulator.hpp"
 #include "globals.hpp"
 
-
 void ExecuteHook(const std::string& Command) {
     std::string cmdStr = Command;
 
-	switch (cmdStr[0]) {
+    switch (cmdStr[0]) {
     case 'g': {
         // g[a] [= StartAddress] [BreakAddress ... [; BreakCommands]]
         if (Command == "g" || Command.starts_with("g ") || Command == "ga" ||

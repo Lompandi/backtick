@@ -60,26 +60,31 @@ bool ExecuteHook(const std::u16string& Command) {
     case 't': {
         if (Command.starts_with(u"t-")) {
             g_Emulator.ReverseStepInto();
+            g_Emulator.PrintSimpleStepStatus();
         }
         else if (Command.starts_with(u"t")) {
             g_Emulator.StepInto();
+            g_Emulator.PrintSimpleStepStatus();
         }
         break;
     }
     case 'p': {
         if (Command.starts_with(u"p-")) {
             g_Emulator.ReverseStepOver();
+            g_Emulator.PrintSimpleStepStatus();
         }
         else if (Command.starts_with(u"p")) {
             g_Emulator.StepOver();
+            g_Emulator.PrintSimpleStepStatus();
         }
         break;
     }
     case 'b': {
+        
         break;
     }
     default: {
-        // std::println("[!] Unknown command!");
+        // Fall back to original debugger engine
         return false;
     }
     }

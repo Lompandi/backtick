@@ -2,6 +2,7 @@
 
 #include <map>
 #include <deque>
+#include <functional>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -15,6 +16,9 @@
 // https://github.com/0vercl0k/wtf/blob/main/src/wtf/bochscpu_backend.cc
 //
 
+class Emulator;
+
+using Hook_t = std::function<void(Emulator*)>;
 
 struct Checkpoint_t {
 	bochscpu_cpu_state_t CpuState;
@@ -29,7 +33,7 @@ public:
 
 	void Run(const std::uint64_t EndAddress = 0);
 
-	void Stop(int value) { InstructionExecutedCount_ = 0; bochscpu_cpu_stop(Cpu_); }
+	void Stop(int value);
 
 	void Reset();
 
@@ -76,7 +80,9 @@ public:
 
 	bool IsGvaMapped(std::uint64_t VirtualAddress) const;
 
-	// HRESULT RunFromStatus(ULONG Status);
+	bool RemoveCodeBreakpoint(uint32_t Index);
+
+	bool InsertCodeBreakpoint(std::uint64_t Address);
 
 	void ReverseStepInto();
 
@@ -88,7 +94,16 @@ public:
 
 	void StepOver();
 
+	bool AddHook(std::uint64_t Address, Hook_t HookFunc);
+
+	std::uint64_t GetArg(unsigned int Index) const;
+
+	std::uint64_t GetArgAddress(const uint64_t Idx) const;
+
+	void PrintSimpleStepStatus() const;
+
 private:
+
 	void LoadState(const CpuState_t& State);
 	
 	void AddDirtyToCheckPoint(std::uint64_t Address, std::size_t Size);
@@ -161,6 +176,8 @@ private:
 	static void StaticUcFarBranchHook(void* Context, uint32_t Cpu, uint32_t What,
 		uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip);
 
+	std::optional<uint32_t> LocateFreeBreakpointId();
+
 	bochscpu_cpu_t Cpu_ = nullptr;
 
 	bochscpu_hooks_t Hooks_ = {};
@@ -177,7 +194,11 @@ private:
 
 	std::uint64_t ExecEndAddress_ = 0;
 
+	std::unordered_map<uint32_t, std::uint64_t> BreakpointIdToAddress_;
+
 	std::unordered_set<std::uint64_t> MappedPhyPages_;
+
+	std::unordered_map<std::uint64_t, Hook_t> UserHooks_;
 
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DirtiedPage_;
 
@@ -191,6 +212,8 @@ private:
 	bool GoingUp_ = false; //stop after return
 
 	bool StepOver_ = false;
+
+	bool ReverseStepOver_ = false;
 
 	std::vector<Checkpoint_t>       CheckPoints_;
 };

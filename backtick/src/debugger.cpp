@@ -327,6 +327,18 @@ std::uint64_t FptwTranslate(std::uint64_t DbgFptw) {
     return Out;
 }
 
+uint64_t Debugger_t::GetDbgSymbol(const char* Name) const {
+    uint64_t Offset = 0;
+    HRESULT Status = Symbols_->GetOffsetByName(Name, &Offset);
+    if (FAILED(Status)) {
+        if (Status == S_FALSE) {
+            __debugbreak();
+        }
+    }
+
+    return Offset;
+}
+
 bool Debugger_t::LoadCpuStateTo(CpuState_t& State) const {
     State.Rax = Reg64("rax");
     State.Rbx = Reg64("rbx");

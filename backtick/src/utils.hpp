@@ -59,4 +59,3 @@ uint64_t ExtractBits(const T& value, size_t startBit, size_t endBit) {
     return result;
 }
 
-bool LoadCpuStateFromJSON(CpuState_t& CpuState, const fs::path& CpuStatePath);

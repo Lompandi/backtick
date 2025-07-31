@@ -89,6 +89,8 @@ public:
 	const std::string GetName(const uint64_t SymbolAddress,
 		const bool Symbolized);
 
+	uint64_t GetDbgSymbol(const char* Name) const;
+
 private:
 	IDebugClient* Client_ = nullptr;
 	IDebugControl* Control_ = nullptr;

@@ -16,6 +16,8 @@ bool CreateCheckPoint_ = true;
 
 constexpr bool BochsDebugging = false;
 
+constexpr uint32_t MaxBreakpointCount = 300;
+
 template <typename... Args_t>
 void BochsDbg(const char* Format, const Args_t &...args) {
 	if constexpr (BochsDebugging) {
@@ -207,7 +209,51 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	//
 
 	LoadState(State);
+
+	//
+	// Install bugcheck callback
+	//
+	AddHook(g_Debugger.GetDbgSymbol("nt!KeBugCheckEx"), [&](Emulator* Emu) {
+		const uint32_t BCode = uint32_t(GetArg(0));
+		const uint64_t B0 = GetArg(1);
+		const uint64_t B1 = GetArg(2);
+		const uint64_t B2 = GetArg(3);
+		const uint64_t B3 = GetArg(4);
+
+		std::println("*** Fatal System Error: {:#08x}", BCode);
+		std::println("                       ({:#10x},{:#10x},{:#10x},{:#10x})",
+			B0, B1, B2, B3);
+		std::println("A fatal system error has occurred.");
+		Stop(1);
+	});
+
 	return true;
+}
+
+std::uint64_t Emulator::GetArgAddress(const uint64_t Idx) const {
+	if (Idx <= 3) {
+		fmt::print("The first four arguments are stored in registers (@rcx, @rdx, "
+			"@r8, @r9) which means you cannot get their addresses.\n");
+		std::abort();
+	}
+
+	return bochscpu_cpu_rsp(Cpu_) + (8 + (Idx * 8));
+}
+
+std::uint64_t Emulator::GetArg(unsigned int Index) const {
+	switch (Index) {
+	case 0:
+		return bochscpu_cpu_rcx(Cpu_);
+	case 1:
+		return bochscpu_cpu_rdx(Cpu_);
+	case 2:
+		return bochscpu_cpu_r8(Cpu_);
+	case 3:
+		return bochscpu_cpu_r9(Cpu_);
+	default: {
+		return VirtRead8(GetArgAddress(Index));
+	}
+	}
 }
 
 void Emulator::Run(const std::uint64_t EndAddress) {
@@ -292,12 +338,6 @@ void Emulator::StepInto() {
 	InstructionLimit_ = 1;
 	Run();
 	InstructionLimit_ = 0;
-
-	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
-		std::println("{}", AddressName);
-	}
-
-	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
 }
 
 void Emulator::StepOver() {
@@ -308,14 +348,7 @@ void Emulator::StepOver() {
 
 	StepOver_ = false;
 	InstructionLimit_ = 0;
-
-	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
-		std::println("{}", AddressName);
-	}
-
-	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
 }
-
 
 bool Emulator::VirtWrite(const std::uint64_t Gva, const uint8_t* Buffer,
 	const uint64_t BufferSize) {
@@ -346,6 +379,14 @@ bool Emulator::VirtWrite(const std::uint64_t Gva, const uint8_t* Buffer,
 	return true;
 }
 
+void Emulator::PrintSimpleStepStatus() const {
+	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
+		std::println("{}", AddressName);
+	}
+	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
+	// std::println("LastInstructionExecuted (after): {:#x}", g_LastInstructionExecuted);
+}
+
 bool Emulator::VirtWrite8(const std::uint64_t Gva, const std::uint64_t Value) {
 	return VirtWrite(Gva, (std::uint8_t*)&Value, 8);
 }
@@ -361,8 +402,6 @@ bool Emulator::VirtWrite2(const std::uint64_t Gva, const std::uint16_t Value) {
 bool Emulator::VirtWrite1(const std::uint64_t Gva, const std::uint8_t Value) {
 	return VirtWrite(Gva, (std::uint8_t*)&Value, 1);
 }
-
-// ... -> after executing ...
 
 void Emulator::AfterExecutionHook(uint32_t, void*) {
 	InstructionExecutedCount_ += 1;
@@ -421,6 +460,14 @@ void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
 	if (bochscpu_cpu_rip(Cpu_) == ExecEndAddress_) [[unlikely]] {
 		BochsDbg("Reached end address, stopping emulator...");
 		Stop(0);
+	}
+
+	//
+	// If user have installed a hook at this address, invoke them:
+	//
+
+	if (UserHooks_.contains(Rip())) {
+		UserHooks_.at(Rip())(this);
 	}
 }
 
@@ -535,16 +582,62 @@ void Emulator::CNearBranchHook(uint32_t Cpu, uint64_t Rip,
 	}
 }
 
+void Emulator::Stop(int value) {
+	InstructionExecutedCount_ = 0;
+	ExecEndAddress_ = 0;
+	bochscpu_cpu_stop(Cpu_); 
+}
+
+std::optional<uint32_t> Emulator::LocateFreeBreakpointId() {
+	uint32_t index = 0;
+	for (index = 0; index < MaxBreakpointCount; index++) {
+		if (!BreakpointIdToAddress_.contains(index)) {
+			return index;
+		}
+	}
+
+	return {};
+}
+
+bool Emulator::RemoveCodeBreakpoint(uint32_t Index) {
+	if (!BreakpointIdToAddress_.contains(Index)) {
+		return false;
+	}
+
+	const auto BreakpointAddress = BreakpointIdToAddress_.at(Index);
+	BreakpointIdToAddress_.erase(Index);
+
+	UserHooks_.erase(BreakpointAddress);
+	return true;
+}
+
+bool Emulator::InsertCodeBreakpoint(std::uint64_t Address) {
+	std::optional<uint32_t> FreeBreakpointIndex = std::nullopt;
+	if (FreeBreakpointIndex = LocateFreeBreakpointId(); !FreeBreakpointIndex.has_value()) {
+		return false;
+	}
+
+	BreakpointIdToAddress_[FreeBreakpointIndex.value()] = Address;
+	return UserHooks_.emplace(Address, [FreeBreakpointIndex](Emulator* Emu) {
+		std::println("Breakpoint {} hit", FreeBreakpointIndex.value());
+		Emu->Stop(0);
+	}).second;
+}
+
 void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 	uint64_t Rip, uint64_t NextRip) {
 
 	uint16_t Opcode = VirtRead2(Rip);
-	if (IsCallinstruction((uint8_t*)&Opcode) && StepOver_) {
+	if (StepOver_ && IsCallinstruction((uint8_t*)&Opcode)) {
 		auto ReturnAddress = VirtRead8(bochscpu_cpu_rsp(Cpu_));
 		InstructionLimit_ = 0;
-		ExecEndAddress_   = ReturnAddress;
+		if (!ExecEndAddress_) {
+			ExecEndAddress_ = ReturnAddress;
+		}
+		// std::println("Rip: {:#x}", ReturnAddress);
 	}
 
+	Opcode = VirtRead2(PrevRip_);
 	if (GoingUp_ && IsRetInstruction((uint8_t*)&Opcode)) {
 		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
 		Stop(0);
@@ -596,7 +689,6 @@ void Emulator::GoUp() {
 }
 
 void Emulator::ReverseStepInto() {
-
 	const auto& PrevState = CheckPoints_.back().CpuState;
 	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
 		VirtWrite(Address, Dirty.data(), Dirty.size());
@@ -615,11 +707,6 @@ void Emulator::ReverseStepInto() {
 	//
 	g_RelativeOffset -= 1;
 
-	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
-		std::println("{}", AddressName);
-	}
-	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
-	std::println("LastInstructionExecuted (after): {:#x}", g_LastInstructionExecuted);
 
 	if (g_LastInstructionExecuted < 2) {
 		if (CheckPoints_.size() == 1) {
@@ -632,7 +719,23 @@ void Emulator::ReverseStepInto() {
 }
 
 void Emulator::ReverseStepOver() {
-	// TODO
+	auto Instr = VirtRead2(PrevRip_);
+
+	if (IsRetInstruction((uint8_t*)&Instr)) {
+		auto InitialRsp = bochscpu_cpu_rsp(Cpu_);
+		while (!IsCallinstruction((uint8_t*)&Instr)) {
+			ReverseStepInto();
+
+			if (IsCallinstruction((uint8_t*)&Instr) && bochscpu_cpu_rsp(Cpu_) == InitialRsp + 8) {
+				break;
+			}
+
+			Instr = VirtRead2(Rip());
+		}
+		return;
+	}
+
+	ReverseStepInto();
 }
 
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
@@ -846,6 +949,10 @@ void Emulator::AddNewCheckPoint() {
 	bochscpu_cpu_state(Cpu_, &State);
 
 	CheckPoints_.push_back(Checkpoint_t{ State, {} });
+}
+
+bool Emulator::AddHook(std::uint64_t Address, Hook_t HookFunc) {
+	return UserHooks_.emplace(Address, HookFunc).second;
 }
 
 void Emulator::LoadState(const CpuState_t& State) {

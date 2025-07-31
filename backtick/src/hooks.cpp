@@ -9,6 +9,7 @@
 #include "globals.hpp"
 #include "emulator.hpp"
 #include "cmdparsing.hpp"
+#include <iostream>
 
 Hooks g_Hooks;
 
@@ -104,7 +105,6 @@ static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* 
     // Check whether it is mapped, if not, foward the execution flow to original function
     //
 
-    //TODO
     if (!g_Emulator.IsGvaMapped(ReadAddress)) {
         using OriginalFunc = HRESULT(__fastcall*)(void* pThis, UINT64 ReadAddress, void* Buffer, uint32_t Size, uint32_t* BytesRead);
         return g_Hooks.CallOriginalTyped<OriginalFunc>(&DoReadVirtualMemoryHook, pThis, ReadAddress, Buffer, Size, BytesRead);
@@ -142,15 +142,6 @@ static HRESULT SetExecStepTraceHook(std::uint64_t pThis,
     std::uint64_t a1, const std::uint16_t* a2, std::uint64_t pThreadInfo, 
     int a3, std::uint64_t InternalCmdState) {
 
-
-    return S_OK;
-}
-
-static HRESULT SetExecutionStatusHook(std::uint64_t pDebugClient, ULONG Status) {
-    HooksDbg("[*] Setting execution status: {:#x}", Status);
-    if (!g_Emulator.RunFromStatus(Status)) {
-        return E_INVALIDARG;
-    }
 
     return S_OK;
 }
@@ -205,40 +196,18 @@ static HRESULT LiveKernelTargetInfoCached__WriteVirtualHook(void* pThis,
         pThis, ProcessInfo, Address, Buffer, Size, OutSize);
 }
 
-static std::string LossyUTF16ToASCII(const std::u16string& utf16) {
-    std::string ascii;
-    ascii.reserve(utf16.size());
-
-    for (char16_t ch : utf16) {
-        if (ch <= 0x7F) {
-            ascii.push_back(static_cast<char>(ch));
-        }
-        else {
-            ascii.push_back('?');
-        }
-    }
-
-    return ascii;
-}
-
-
-/*static HRESULT ExecuteCommandHook(struct DebugClient* Client,
+static HRESULT ExecuteCommandHook(struct DebugClient* Client,
     const unsigned __int16* Command, signed int a2, int a1) {
 
     std::u16string WCommandString;
     WCommandString.assign(reinterpret_cast<const char16_t*>(Command));
 
-    std::println("Executing Command: {}", LossyUTF16ToASCII(WCommandString));
-
-    return S_OK;
-
-   if (ExecuteHook(WCommandString)) {
-
+    if (ExecuteHook(WCommandString)) {
         return S_OK;
-   }
+    }
 
-    return OriginalExecuteCommand(Client, Command, Length, a1);
-}*/
+    return OriginalExecuteCommand(Client, Command, a2, a1);
+}
 
 void Hooks::FlushDbsSplayTreeCache() {
     //
@@ -265,8 +234,6 @@ bool Hooks::Enable() {
 
     DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
 
-    AddJmpHook((void*)(DbgEngBase + SetExecutionStatusOffset), SetExecutionStatusHook);
-
     OriginalGetPcVal = reinterpret_cast<GetPc_t>(AddDetour(
         (void*)(DbgEngBase + GetPcOffset), (void*)GetPcHook
     ));
@@ -275,9 +242,9 @@ bool Hooks::Enable() {
         (void*)(DbgEngBase + GetRegValOffset), (void*)GetRegisterValHook
     ));
 
-    /*OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
+    OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
         (void*)(DbgEngBase + ExecuteCommandOffset), (void*)ExecuteCommandHook
-    ));*/
+    ));
 
     return true;
 }
@@ -310,22 +277,12 @@ bool Hooks::Restore() {
         VirtualProtect(targetAddress, sizeof(void*), oldProtect, &oldProtect);
     }
 
-    //
-    // Remove all tranpoline instruction
-    //
-    RestorePatchedBytes();
-
-    for (auto& [original, detour] : DetouredFunctions_) {
-        void* origPtr = original;
-        if (DetourTransactionBegin() == NO_ERROR &&
-            DetourUpdateThread(GetCurrentThread()) == NO_ERROR &&
-            DetourDetach(&origPtr, detour) == NO_ERROR) {
-            DetourTransactionCommit();
-        }
-        else {
-            std::println("Failed to remove detour for: ");
-        }
-    }
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    DetourDetach(&(PVOID&)OriginalExecuteCommand, ExecuteCommandHook);
+    DetourDetach(&(PVOID&)OriginalGetRegisterVal, GetRegisterValHook);
+    DetourDetach(&(PVOID&)OriginalGetPcVal, GetPcHook);
+    DetourTransactionCommit();
 
     DetouredFunctions_.clear();
 
@@ -368,60 +325,18 @@ bool Hooks::Init() {
 	return true;
 }
 
-// KdContinue->WaitStateChange
-
-void* Hooks::AddJmpHook(void* target, void* detour) {
-    BYTE* src = static_cast<BYTE*>(target);
-    BYTE* dst = static_cast<BYTE*>(detour);
-
-    DWORD oldProtect;
-    const size_t hookLength = 12; // Length of mov rax + jmp rax
-
-    //
-    // Backup original bytes
-    //
-    std::vector<BYTE> originalBytes(src, src + hookLength);
-    PatchedBytes_[target] = originalBytes;
-
-    BYTE* Trampoline = (BYTE*)VirtualAlloc(nullptr, hookLength + 14, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!Trampoline) return nullptr;
-
-    memcpy(Trampoline, src, hookLength);
-
-    uintptr_t jmpBackAddr = (uintptr_t)(src + hookLength);
-    Trampoline[hookLength] = 0x48;                         // mov rax, jmpBackAddr
-    Trampoline[hookLength + 1] = 0xB8;
-    *(uintptr_t*)(Trampoline + hookLength + 2) = jmpBackAddr;
-    Trampoline[hookLength + 10] = 0xFF;                    // jmp rax
-    Trampoline[hookLength + 11] = 0xE0;
-
-    VirtualProtect(src, hookLength, PAGE_EXECUTE_READWRITE, &oldProtect);
-    src[0] = 0x48;
-    src[1] = 0xB8;
-    *(uintptr_t*)(src + 2) = (uintptr_t)dst;
-    src[10] = 0xFF;
-    src[11] = 0xE0;
-
-    //for (size_t i = 12; i < hookLength; ++i)
-      //  src[i] = 0x90;
-
-    VirtualProtect(src, hookLength, oldProtect, &oldProtect);
-    FlushInstructionCache(GetCurrentProcess(), src, hookLength);
-
-    return Trampoline;
-}
-
 void* Hooks::AddDetour(void* targetFunc, void* detourFunc) {
     void* original = targetFunc;
+
     if (DetourTransactionBegin() != NO_ERROR ||
         DetourUpdateThread(GetCurrentThread()) != NO_ERROR ||
         DetourAttach(&original, detourFunc) != NO_ERROR ||
         DetourTransactionCommit() != NO_ERROR) {
-        std::println("Detour attach failed");
+        std::println("Detour attach failed for {}", targetFunc);
         return nullptr;
     }
 
-    DetouredFunctions_[targetFunc] = detourFunc;
+    DetouredFunctions_[targetFunc] = original;
     HookedToOriginal_[detourFunc] = targetFunc;
     return original;
 }

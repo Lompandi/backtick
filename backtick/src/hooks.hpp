@@ -40,8 +40,6 @@ public:
         return originalFunc(std::forward<TArgs>(args)...);
     }
     
-    void* AddJmpHook(void* Address, void* Function);
-
     void* AddDetour(void* targetFunc, void* detourFunc);
 private:
     std::vector<std::tuple<void**, size_t, void*>> RegisteredHooks_;

@@ -10,6 +10,8 @@ TimeFrames_t g_TimeFrames;
 
 std::size_t g_LastInstructionExecuted = 0;
 
+long long g_RelativeOffset = 1;
+
 bool CreateCheckPoint_ = true;
 
 constexpr bool BochsDebugging = false;
@@ -224,45 +226,6 @@ void Emulator::Run(const std::uint64_t EndAddress) {
 	bochscpu_cpu_run(Cpu_, HookChain_);
 }
 
-HRESULT Emulator::RunFromStatus(ULONG Status) {
-
-	switch (Status) {
-	case DEBUG_STATUS_STEP_OVER: {
-		//
-		// Dbgeng will change the current rip to next instruction pointer before 
-		// changing register state, so we must set rip to previous one and continue to
-		// the current rip to do a step-over
-		//
-		ExecEndAddress_ = Rip();
-		Run();
-		ExecEndAddress_ = 0ull;
-		break;
-	}
-	case DEBUG_STATUS_STEP_INTO: {
-		InstructionLimit_ = 1;
-		Run();
-		InstructionLimit_ = 0;
-		return 0x80070005;
-	}
-	case DEBUG_STATUS_GO: {
-		Run();
-		break;
-	}
-	case DEBUG_STATUS_STEP_BRANCH: {
-		RunTillBranch_ = true;
-		Run();
-		RunTillBranch_ = false;
-		break;
-	}
-	case DEBUG_STATUS_BREAK: {
-		Stop(0);
-		break;
-	}
-	}
-
-	return E_INVALIDARG;
-}
-
 bool Emulator::VirtTranslate(const std::uint64_t Gva, std::uint64_t& Gpa) const {
 	const uint64_t Cr3 = bochscpu_cpu_cr3(Cpu_);
 	Gpa = bochscpu_mem_virt_translate(Cr3, Gva);
@@ -325,6 +288,35 @@ std::uint8_t Emulator::VirtRead1(std::uint64_t Gva) const {
 	return Value;
 }
 
+void Emulator::StepInto() {
+	InstructionLimit_ = 1;
+	Run();
+	InstructionLimit_ = 0;
+
+	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
+		std::println("{}", AddressName);
+	}
+
+	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
+}
+
+void Emulator::StepOver() {
+	StepOver_ = true;
+	InstructionLimit_ = 1;
+	
+	Run();
+
+	StepOver_ = false;
+	InstructionLimit_ = 0;
+
+	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
+		std::println("{}", AddressName);
+	}
+
+	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
+}
+
+
 bool Emulator::VirtWrite(const std::uint64_t Gva, const uint8_t* Buffer,
 	const uint64_t BufferSize) {
 
@@ -376,13 +368,50 @@ void Emulator::AfterExecutionHook(uint32_t, void*) {
 	InstructionExecutedCount_ += 1;
 	g_LastInstructionExecuted += 1;
 
+	if (g_RelativeOffset > 0) {
+		PcTrace_.push_back(Rip());
+	}
+
 	// std::println("[*] Executing {:#x}", Rip());
 
 	PrevPrevRip_ = PrevRip_;
-	PrevRip_ = Rip();
+	PrevRip_	 = Rip();
 
 	if (InstructionExecutedCount_ > MaxiumInstructionLimit_) {
 		std::println("Reached execution limit, stopping");
+		Stop(0);
+	}
+}
+
+bool IsCallinstruction(std::uint8_t* Code) {
+	int OpcodeOffset = 0;
+
+	if (Code[0] >> 4 == 0b0100) {
+		OpcodeOffset += 1;
+	}
+
+	return Code[OpcodeOffset] == 0xE8 || Code[OpcodeOffset] == 0xFF
+		|| Code[OpcodeOffset] == 0x9A;
+}
+
+bool IsRetInstruction(std::uint8_t* Code) {
+	int OpcodeOffset = 0;
+
+	if (Code[0] >> 4 == 0b0100) {
+		OpcodeOffset += 1;
+	}
+
+	return Code[OpcodeOffset] == 0xC3 || Code[OpcodeOffset] == 0xCB || Code[OpcodeOffset] == 0xC2
+		|| Code[OpcodeOffset] == 0xCA || Code[OpcodeOffset] == 0xCF; 
+}
+
+void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
+
+	//
+	// Stop if exceed maxium instruction executed allowed
+	//
+	if (InstructionLimit_ && InstructionExecutedCount_ >= InstructionLimit_) {
+		BochsDbg("Reached execution limit, stopping emulator...");
 		Stop(0);
 	}
 
@@ -391,19 +420,6 @@ void Emulator::AfterExecutionHook(uint32_t, void*) {
 	//
 	if (bochscpu_cpu_rip(Cpu_) == ExecEndAddress_) [[unlikely]] {
 		BochsDbg("Reached end address, stopping emulator...");
-		Stop(0);
-	}
-}
-
-void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
-	// TODO
-	// std::println("Executing {:#x}", bochscpu_cpu_rip(Cpu_));
-	//
-	// Check if we exceed execution limit, this is useful when implementing things like
-	// single-stepping
-	//
-	if (InstructionLimit_ && InstructionExecutedCount_ >= InstructionLimit_) {
-		BochsDbg("Reached execution limit, stopping emulator...");
 		Stop(0);
 	}
 }
@@ -522,9 +538,22 @@ void Emulator::CNearBranchHook(uint32_t Cpu, uint64_t Rip,
 void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 	uint64_t Rip, uint64_t NextRip) {
 
+	uint16_t Opcode = VirtRead2(Rip);
+	if (IsCallinstruction((uint8_t*)&Opcode) && StepOver_) {
+		auto ReturnAddress = VirtRead8(bochscpu_cpu_rsp(Cpu_));
+		InstructionLimit_ = 0;
+		ExecEndAddress_   = ReturnAddress;
+	}
+
+	if (GoingUp_ && IsRetInstruction((uint8_t*)&Opcode)) {
+		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
+		Stop(0);
+	}
+
 	AddNewCheckPoint();
 
-	if (RunTillBranch_) {
+	bool GoingUpEnd = (What == BOCHSCPU_INSTR_IS_IRET || What == BOCHSCPU_INSTR_IS_RET && GoingUp_);
+	if (RunTillBranch_ || GoingUpEnd) {
 		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
 		Stop(0);
 	}
@@ -533,12 +562,37 @@ void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 void Emulator::UcFarBranchHook(uint32_t Cpu, uint32_t What,
 	uint16_t a1, uint64_t Rip, uint16_t a2, uint64_t NextRip) {
 
+	uint16_t Opcode = VirtRead2(Rip);
+	if (IsCallinstruction((uint8_t*)&Opcode) && StepOver_) {
+		auto ReturnAddress = VirtRead8(bochscpu_cpu_rsp(Cpu_));
+		InstructionLimit_ = 0;
+		ExecEndAddress_ = ReturnAddress;
+	}
+
+	if (GoingUp_ && IsRetInstruction((uint8_t*)&Opcode)) {
+		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
+		Stop(0);
+	}
+
 	AddNewCheckPoint();
 
-	if (RunTillBranch_) {
+	bool GoingUpEnd = (What == BOCHSCPU_INSTR_IS_IRET || What == BOCHSCPU_INSTR_IS_RET && GoingUp_);
+	if (RunTillBranch_ || GoingUpEnd) {
 		BochsDbg("[*] Reached branch instruction (far), stopping cpu...\n");
 		Stop(0);
 	}
+}
+
+void Emulator::GoUp() {
+	GoingUp_ = true;
+	Run();
+	GoingUp_ = false;
+
+	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
+		std::println("{}", AddressName);
+	}
+
+	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
 }
 
 void Emulator::ReverseStepInto() {
@@ -547,8 +601,6 @@ void Emulator::ReverseStepInto() {
 	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
 		VirtWrite(Address, Dirty.data(), Dirty.size());
 	}
-
-	// kd -k net:port=50000,key=p.a.s.s,target=172.17.244.81
 
 	bochscpu_cpu_set_state(Cpu_, &PrevState);
 
@@ -561,6 +613,7 @@ void Emulator::ReverseStepInto() {
 	//
 	// Simulate windbg output
 	//
+	g_RelativeOffset -= 1;
 
 	if (const auto& AddressName = g_Debugger.GetName(Rip(), true); !AddressName.empty()) {
 		std::println("{}", AddressName);
@@ -568,7 +621,7 @@ void Emulator::ReverseStepInto() {
 	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
 	std::println("LastInstructionExecuted (after): {:#x}", g_LastInstructionExecuted);
 
-	if (g_LastInstructionExecuted < 3) {
+	if (g_LastInstructionExecuted < 2) {
 		if (CheckPoints_.size() == 1) {
 			std::println("Reached backstep end.");
 			return;
@@ -576,6 +629,10 @@ void Emulator::ReverseStepInto() {
 
 		CheckPoints_.pop_back();
 	}
+}
+
+void Emulator::ReverseStepOver() {
+	// TODO
 }
 
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
@@ -758,7 +815,6 @@ bool Emulator::SetReg(const Registers_t Reg,
 	}
 
 	if (RegisterSelMappingSetters.contains(Reg) && RegisterSelMappingGetters.contains(Reg)) {
-		// TODO: Handle 8 bit?
 		bochscpu_cpu_seg_t Seg;
 		RegisterSelMappingGetters.at(Reg)(Cpu_, &Seg);
 

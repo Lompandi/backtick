@@ -955,3 +955,51 @@ void Emulator::LoadState(const CpuState_t& State) {
 	bochscpu_cpu_set_state(Cpu_, &Bochs);
 	AddNewCheckPoint();
 }
+
+void Emulator::StepToAddress(std::uint64_t address) {
+	while (Rip() != address) {
+		g_Emulator.StepOver();
+	}
+}
+void Emulator::StepToNextCall() {
+	uint32_t opCode = g_Emulator.VirtRead4(Rip());
+	while (isCall(&opCode)) {
+		g_Emulator.StepOver();
+	}
+}
+void Emulator::StepToNextCallOrReturn() {
+	uint32_t opCode = g_Emulator.VirtRead4(Rip());
+	while (isCall(&opCode) || isRet(&opCode)) {
+		g_Emulator.StepOver();
+	}
+}
+
+void Emulator::StepToNextReturn() {
+	uint32_t opCode = g_Emulator.VirtRead4(Rip());
+	while (isRet(&opCode)) {
+		g_Emulator.StepOver();
+	}
+}
+
+bool isCall(const uint32_t* ptr) {
+	if (!ptr) return false;
+
+	// 直接呼叫 opcode: 0xE8
+	if (*ptr == 0xE8) {
+		return true;
+	}
+	return false;
+}
+bool isRet(std::uint32_t* ptr) {
+	if (!ptr) return false;
+
+	// 常見的 ret 指令 opcode
+	uint8_t retOpcodes[] = { 0xC3, 0xCB, 0xC2, 0xCA, 0xCF };
+
+	for (uint8_t opcode : retOpcodes) {
+		if (*ptr == opcode) {
+			return true;
+		}
+	}
+	return false;
+}

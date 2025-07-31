@@ -7,14 +7,15 @@
 
 namespace fs = std::filesystem;
 
-constexpr std::uint64_t AlignPage(std::uint64_t Address) {
-	return Address & ~0xfff;
-}
+constexpr std::uint64_t AlignPage(std::uint64_t Address) { return Address & ~0xfff; }
 
 void Hexdump(const void* data, size_t size);
 
 struct CpuState_t;
 
+std::uint64_t ScanPattern(const std::vector<int>& pattern, std::uint64_t maxScanLength = 0x1000000);
+
+std::uint64_t ScanPattern(const std::string& pattern, std::uint64_t maxScanLength = 0x1000000);
 
 template <typename T>
 bool ExtractBit(const T& value, std::size_t bitPos) {
@@ -34,7 +35,7 @@ bool ExtractBit(const T& value, std::size_t bitPos) {
     return (bytes[byteIndex] >> bitIndex) & 1;
 }
 
-template<typename T>
+template <typename T>
 uint64_t ExtractBits(const T& value, size_t startBit, size_t endBit) {
     static_assert(std::is_trivially_copyable<T>::value, "T must be trivially copyable");
 

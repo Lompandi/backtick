@@ -88,6 +88,14 @@ public:
 
 	void StepOver();
 
+	void StepToAddress(std::uint64_t address);
+
+	void StepToNextCall();
+
+	void StepToNextCallOrReturn();
+
+	void StepToNextReturn();
+
 private:
 	void LoadState(const CpuState_t& State);
 	
@@ -200,3 +208,7 @@ using TimeFrames_t = std::map<unsigned int, CpuState_t>;
 extern Emulator g_Emulator;
 
 extern TimeFrames_t g_TimeFrames;
+
+bool isCall(const uint32_t* ptr);
+
+bool isRet(std::uint32_t* ptr);

@@ -21,7 +21,6 @@ std::string LossyUTF16ToASCII(const std::u16string& utf16) {
 
 bool ExecuteHook(const std::u16string& Command) {
     std::u16string cmdStr = Command;
-
     switch (cmdStr[0]) {
     case 'g': {
         // g[a] [= StartAddress] [BreakAddress ... [; BreakCommands]]
@@ -58,17 +57,59 @@ bool ExecuteHook(const std::u16string& Command) {
         break;
     }
     case 't': {
-        if (Command.starts_with(u"t-")) {
-            g_Emulator.ReverseStepInto();
+        if (Command.starts_with(u"ta")) {
+
+        }
+        else if (Command.starts_with(u"tb")) {
+
+        }
+        else if (Command.starts_with(u"tc")) {
+
+        }
+        else if (Command.starts_with(u"tct")) {
+
+        }
+        else if (Command.starts_with(u"th")) {
+
+        }
+        else if (Command.starts_with(u"tt")) {
+
         }
         else if (Command.starts_with(u"t")) {
-            g_Emulator.StepInto();
+
         }
         break;
     }
     case 'p': {
-        if (Command.starts_with(u"p-")) {
-            g_Emulator.ReverseStepOver();
+        if (Command.starts_with(u"pa")) {
+            size_t spacePos = cmdStr.find(u' ');
+            if (spacePos != std::u16string::npos) {
+                std::u16string arg = cmdStr.substr(spacePos + 1);
+                // 將 UTF-16 參數轉成 std::string（假設是 ASCII）再轉成 uint64_t
+                std::string asciiArg(arg.begin(), arg.end());
+                std::istringstream iss(asciiArg);
+                uint64_t address;
+                iss >> std::hex >> address;
+                g_Emulator.StepToAddress(address);
+            }
+            else {
+                std::println("[!]no Parameters!");
+            }
+        }
+        else if (Command.starts_with(u"pct")) {
+            g_Emulator.StepToNextCallOrReturn();
+        }
+        else if (Command.starts_with(u"pc")) {
+            g_Emulator.StepToNextCall();
+        }
+        else if (Command.starts_with(u"ph")) {
+            //g_Emulator.StepToNextBranchingInstruction();
+        }
+        else if (Command.starts_with(u"pt")) {
+            g_Emulator.StepToNextReturn();
+        }
+        else if (Command.starts_with(u"p-")) {
+
         }
         else if (Command.starts_with(u"p")) {
             g_Emulator.StepOver();
@@ -76,14 +117,14 @@ bool ExecuteHook(const std::u16string& Command) {
         break;
     }
     case 'b': {
+
         break;
     }
     default: {
-        // std::println("[!] Unknown command!");
+        //std::println("[!]Unknown command!")
         return false;
     }
     }
-
     return true;
 }
 

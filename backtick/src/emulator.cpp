@@ -214,6 +214,10 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	// Install bugcheck callback
 	//
 	AddHook(g_Debugger.GetDbgSymbol("nt!KeBugCheckEx"), [&](Emulator* Emu) {
+		if (DisableBugCheckHook_) {
+			return;
+		}
+
 		const uint32_t BCode = uint32_t(GetArg(0));
 		const uint64_t B0 = GetArg(1);
 		const uint64_t B1 = GetArg(2);
@@ -257,6 +261,11 @@ std::uint64_t Emulator::GetArg(unsigned int Index) const {
 }
 
 void Emulator::Run(const std::uint64_t EndAddress) {
+	//
+	// Clear revert status
+	//
+	ReachedRevertEnd_ = false;
+
 	//
 	// Set end point
 	//
@@ -557,7 +566,6 @@ void Emulator::InterruptHook(uint32_t, uint32_t Vector) {
 	//
 }
 
-
 void Emulator::ExceptionHook(uint32_t,
 	uint32_t Vector, uint32_t ErrorCode) {
 
@@ -625,10 +633,14 @@ bool Emulator::InsertCodeBreakpoint(std::uint64_t Address) {
 	}
 
 	BreakpointIdToAddress_[FreeBreakpointIndex.value()] = Address;
-	return UserHooks_.emplace(Address, [FreeBreakpointIndex](Emulator* Emu) {
+	if (!UserHooks_.emplace(Address, [FreeBreakpointIndex](Emulator* Emu) {
 		std::println("Breakpoint {} hit", FreeBreakpointIndex.value());
 		Emu->Stop(0);
-	}).second;
+	}).second) {
+		std::println("breakpoint {} redefined", Address);
+		return false;
+	}
+	return true;
 }
 
 void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
@@ -695,7 +707,47 @@ void Emulator::GoUp() {
 	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
 }
 
+/*
+void Emulator::ReverseGo() {
+	if (ReachedRevertEnd_) {
+		return;
+	}
+
+	CreateCheckPoint_ = false;
+	DisableBugCheckHook_ = true;
+
+	while (CheckPoints_.size() > 1) {
+		auto PDst = CheckPoints_.back();
+		CheckPoints_.pop_back();
+		auto PSrc = CheckPoints_.back();
+
+		const auto& PrevState = PSrc.CpuState;
+		for (const auto& [Address, Dirty] : PSrc.DirtiedBytes_) {
+			VirtWrite(Address, Dirty.data(), Dirty.size());
+		}
+
+		bochscpu_cpu_set_state(Cpu_, &PrevState);
+
+		Run(PDst.CpuState.rip);
+	}
+
+	DisableBugCheckHook_ = false;
+	CreateCheckPoint_ = true;
+
+	const auto& PInitial = CheckPoints_.back();
+	const auto& PrevState = PInitial.CpuState;
+	for (const auto& [Address, Dirty] : PInitial.DirtiedBytes_) {
+		VirtWrite(Address, Dirty.data(), Dirty.size());
+	}
+
+	bochscpu_cpu_set_state(Cpu_, &PrevState);
+}*/
+
 void Emulator::ReverseStepInto() {
+	if (ReachedRevertEnd_) {
+		return;
+	}
+
 	const auto& PrevState = CheckPoints_.back().CpuState;
 	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
 		VirtWrite(Address, Dirty.data(), Dirty.size());
@@ -717,7 +769,8 @@ void Emulator::ReverseStepInto() {
 
 	if (g_LastInstructionExecuted < 2) {
 		if (CheckPoints_.size() == 1) {
-			std::println("Reached backstep end.");
+			std::println("Reached backstep end");
+			ReachedRevertEnd_ = true;
 			return;
 		}
 
@@ -733,7 +786,8 @@ void Emulator::ReverseStepOver() {
 		while (!IsCallinstruction((uint8_t*)&Instr)) {
 			ReverseStepInto();
 
-			if (IsCallinstruction((uint8_t*)&Instr) && bochscpu_cpu_rsp(Cpu_) == InitialRsp + 8) {
+			if (IsCallinstruction((uint8_t*)&Instr) && bochscpu_cpu_rsp(Cpu_) == InitialRsp + 8
+				|| ReachedRevertEnd_) {
 				break;
 			}
 
@@ -942,8 +996,20 @@ void Emulator::Reset() {
 	MappedPhyPages_.clear();
 	DirtiedPage_.clear();
 	ExecEndAddress_		= 0;
-	InitialCr3_			= 0;
 	InstructionLimit_	= 0;
+	PcTrace_.clear();
+	
+	InstructionExecutedCount_ = 0;
+	MappedPhyPages_.clear();
+	PrevPrevRip_		= 0;
+	PrevRip_			= 0;
+	RunTillBranch_		= false;
+	GoingUp_			= false;
+	StepOver_			= false;
+	ReverseStepOver_	= false;
+	ReachedRevertEnd_	= false;
+	CheckPoints_.clear();
+
 	bochscpu_cpu_delete(Cpu_);
 }
 
@@ -1002,10 +1068,7 @@ void Emulator::LoadState(const CpuState_t& State) {
 	Bochs.fptw = State.Fptw.Value;
 	Bochs.cr0 = std::uint32_t(State.Cr0.Flags);
 	Bochs.cr2 = State.Cr2;
-
 	Bochs.cr3 = State.Cr3;
-	InitialCr3_ = State.Cr3;
-
 	Bochs.cr4 = std::uint32_t(State.Cr4.Flags);
 	Bochs.cr8 = State.Cr8;
 	Bochs.xcr0 = State.Xcr0;

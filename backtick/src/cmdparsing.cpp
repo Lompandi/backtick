@@ -55,6 +55,9 @@ bool ExecuteHook(const std::u16string& Command) {
         else if (Command == u"gu") {
             g_Emulator.GoUp();
         }
+        else if (Command.starts_with(u"g-")) {
+            g_Emulator.ReverseGo();
+        }
         break;
     }
     case 't': {

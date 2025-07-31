@@ -80,6 +80,8 @@ bool Debugger_t::Init() {
         return false;
     }
 
+    Symbols_->Reload("");
+
     return true;
 }
 

@@ -86,6 +86,8 @@ public:
 
 	bool InsertCodeBreakpoint(std::uint64_t Address);
 
+	// void ReverseGo();
+
 	void ReverseStepInto();
 
 	void ReverseStepOver();
@@ -192,8 +194,6 @@ private:
 
 	std::uint64_t InstructionLimit_ = 0;
 
-	std::uint64_t InitialCr3_ = 0;
-
 	std::uint64_t ExecEndAddress_ = 0;
 
 	std::unordered_map<uint32_t, std::uint64_t> BreakpointIdToAddress_;
@@ -205,6 +205,7 @@ private:
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DirtiedPage_;
 
 	std::uint64_t PrevPrevRip_ = 0;
+
 	std::uint64_t PrevRip_ = 0;
 
 	std::deque<std::uint64_t> PcTrace_;
@@ -216,6 +217,10 @@ private:
 	bool StepOver_ = false;
 
 	bool ReverseStepOver_ = false;
+
+	bool ReachedRevertEnd_ = false;
+
+	bool DisableBugCheckHook_ = false;
 
 	std::vector<Checkpoint_t>       CheckPoints_;
 };

@@ -11,11 +11,8 @@ TimeFrames_t g_TimeFrames;
 std::size_t g_LastInstructionExecuted = 0;
 
 long long g_RelativeOffset = 1;
-
 bool CreateCheckPoint_ = true;
-
 constexpr bool BochsDebugging = false;
-
 constexpr uint32_t MaxBreakpointCount = 300;
 
 template <typename... Args_t>
@@ -502,9 +499,8 @@ void Emulator::LinAccessHook(uint32_t,
 		return;
 	}
 	
-	BochsDbg("Dirtied GVA: {:#x}\n", VirtualAddress);
-
-	DirtyPhysicalMemoryRange(PhysicalAddress, Len);
+	AddDirtyToCheckPoint(VirtualAddress, Len);
+	// DirtyPhysicalMemoryRange(PhysicalAddress, Len);
 }
 
 bool Emulator::DirtyGpaPage(const std::uint64_t Gpa) {
@@ -633,9 +629,10 @@ bool Emulator::InsertCodeBreakpoint(std::uint64_t Address) {
 	}
 
 	BreakpointIdToAddress_[FreeBreakpointIndex.value()] = Address;
-	if (!UserHooks_.emplace(Address, [FreeBreakpointIndex](Emulator* Emu) {
+	if (!UserHooks_.emplace(Address, [this, FreeBreakpointIndex](Emulator* Emu) {
 		std::println("Breakpoint {} hit", FreeBreakpointIndex.value());
 		Emu->Stop(0);
+		PrintSimpleStepStatus();
 	}).second) {
 		std::println("breakpoint {} redefined", Address);
 		return false;
@@ -707,6 +704,7 @@ void Emulator::GoUp() {
 	std::print("{}", g_Debugger.Disassemble(Rip()).value_or("???"));
 }
 
+
 /*
 void Emulator::ReverseGo() {
 	if (ReachedRevertEnd_) {
@@ -750,22 +748,23 @@ void Emulator::ReverseStepInto() {
 
 	const auto& PrevState = CheckPoints_.back().CpuState;
 	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
+		std::println("Restoring {}", Hexdump(Dirty.data(), Dirty.size()));
 		VirtWrite(Address, Dirty.data(), Dirty.size());
 	}
 
 	bochscpu_cpu_set_state(Cpu_, &PrevState);
 
+	IsReverseStepInto_ = true;
 	CreateCheckPoint_ = false;
 
 	Run(PrevPrevRip_);
 
+	IsReverseStepInto_ = false;
 	CreateCheckPoint_ = true;
 
 	//
 	// Simulate windbg output
 	//
-	g_RelativeOffset -= 1;
-
 
 	if (g_LastInstructionExecuted < 2) {
 		if (CheckPoints_.size() == 1) {
@@ -774,6 +773,7 @@ void Emulator::ReverseStepInto() {
 			return;
 		}
 
+		PrevPrevRip_ = CheckPoints_.back().CpuState.rip;
 		CheckPoints_.pop_back();
 	}
 }
@@ -934,6 +934,14 @@ void Emulator::AddDirtyToCheckPoint(std::uint64_t Address, std::size_t Size) {
 	std::vector<uint8_t> OriginalData(Size);
 	VirtRead(Address, OriginalData.data(), Size);
 
+	std::println("Writing {} to {:#x}", Hexdump(OriginalData.data(), OriginalData.size()),
+		Address);
+
+	if (CheckPoints_.empty()) {
+		QueuedCheckPoint_.value().DirtiedBytes_[Address] = OriginalData;
+		return;
+	}
+
 	if (!CheckPoints_.back().DirtiedBytes_.contains(Address)) {
 		CheckPoints_.back().DirtiedBytes_[Address] = OriginalData;
 	}
@@ -1007,6 +1015,7 @@ void Emulator::Reset() {
 	GoingUp_			= false;
 	StepOver_			= false;
 	ReverseStepOver_	= false;
+	IsReverseStepInto_	= false;
 	ReachedRevertEnd_	= false;
 	CheckPoints_.clear();
 
@@ -1018,10 +1027,14 @@ void Emulator::AddNewCheckPoint() {
 		return;
 	}
 
+	if (QueuedCheckPoint_) {
+		CheckPoints_.push_back(QueuedCheckPoint_.value());
+	}
+
 	bochscpu_cpu_state_t State;
 	bochscpu_cpu_state(Cpu_, &State);
 
-	CheckPoints_.push_back(Checkpoint_t{ State, {} });
+	QueuedCheckPoint_ = Checkpoint_t{ State, {} };
 }
 
 bool Emulator::AddHook(std::uint64_t Address, Hook_t HookFunc) {

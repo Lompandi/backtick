@@ -26,9 +26,18 @@ constexpr std::uint64_t WaitStateChangeOffset        = 0x1A118C;
 
 constexpr std::uint64_t DbsSplayTreeCacheFlushOffset = 0x487D18;
 
+// LiveKernelTargetInfoCached::ReadVirtual
+constexpr std::uint64_t ReadVirtualOffset = 0x1171E0;
+using ReadVirtualOffset_t = HRESULT(__fastcall*)(void*, void*, uint64_t, void*, uint32_t, uint32_t*);
+static ReadVirtualOffset_t OriginalReadVirtual = nullptr;
+
 constexpr std::uint64_t GetRegValOffset              = 0xA1CC0;
 using GetRegisterVal_t = HRESULT(__fastcall*)(void*, ULONG, REGVAL*);
 static GetRegisterVal_t OriginalGetRegisterVal = nullptr;
+
+constexpr std::uint64_t WriteVirtualOffset = 0x119EC0;
+using WriteVirtual_t = HRESULT(__fastcall*)(void*, void*, uint64_t, void*, uint32_t, uint32_t*);
+static WriteVirtual_t OriginalWriteVirtual = nullptr;
 
 struct _ADDR {
     std::uint64_t Type;
@@ -98,7 +107,7 @@ static HRESULT GetRegisterValHook(void* pThis, ULONG Index, REGVAL* pRegVal) {
     );
 }
 
-static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* Buffer, uint32_t Size, uint32_t* BytesRead) {
+static HRESULT ReadVirtualHook(void* pThis, void* Process, uint64_t ReadAddress, void* Buffer, uint32_t Size, uint32_t* BytesRead) {
     HooksDbg("[*] {:#x} Reading {} bytes from {:#x}", (uintptr_t)pThis, Size, ReadAddress);
 
     //
@@ -106,8 +115,7 @@ static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* 
     //
 
     if (!g_Emulator.IsGvaMapped(ReadAddress)) {
-        using OriginalFunc = HRESULT(__fastcall*)(void* pThis, UINT64 ReadAddress, void* Buffer, uint32_t Size, uint32_t* BytesRead);
-        return g_Hooks.CallOriginalTyped<OriginalFunc>(&DoReadVirtualMemoryHook, pThis, ReadAddress, Buffer, Size, BytesRead);
+        return OriginalReadVirtual(pThis, Process, ReadAddress, Buffer, Size, BytesRead);
     }
 
     if (!g_Emulator.VirtRead(ReadAddress, (uint8_t*)Buffer, Size)) {
@@ -125,7 +133,7 @@ static HRESULT DoReadVirtualMemoryHook(void* pThis, uint64_t ReadAddress, void* 
 //unshadow
 //db address ->
 
-static HRESULT DoWriteVirtualMemoryHook(uint64_t pThis, uint64_t WriteAddress, void* Buffer, uint32_t Size, uint32_t* BytesWritten) {
+static HRESULT WriteVirtualHook(void* pThis, void* Process, uint64_t WriteAddress, void* Buffer, uint32_t Size, uint32_t* BytesWritten) {
     HooksDbg("[*] Writing {} bytes to {:#x}", Size, WriteAddress);
 
     //TODO: Idk if the page is not loaded probably bring it up before writing to it
@@ -246,6 +254,14 @@ bool Hooks::Enable() {
         (void*)(DbgEngBase + ExecuteCommandOffset), (void*)ExecuteCommandHook
     ));
 
+    OriginalReadVirtual = reinterpret_cast<ReadVirtualOffset_t>(AddDetour(
+        (void*)(DbgEngBase + ReadVirtualOffset), (void*)ReadVirtualHook
+    ));
+
+    OriginalWriteVirtual = reinterpret_cast<WriteVirtual_t>(AddDetour(
+        (void*)(DbgEngBase + WriteVirtualOffset), (void*)WriteVirtualHook
+    ));
+
     return true;
 }
 
@@ -281,7 +297,9 @@ bool Hooks::Restore() {
     DetourUpdateThread(GetCurrentThread());
     DetourDetach(&(PVOID&)OriginalExecuteCommand, ExecuteCommandHook);
     DetourDetach(&(PVOID&)OriginalGetRegisterVal, GetRegisterValHook);
-    DetourDetach(&(PVOID&)OriginalGetPcVal, GetPcHook);
+    DetourDetach(&(PVOID&)OriginalGetPcVal,       GetPcHook);
+    DetourDetach(&(PVOID&)OriginalReadVirtual,    ReadVirtualHook);
+    DetourDetach(&(PVOID&)OriginalWriteVirtual,   WriteVirtualHook);
     DetourTransactionCommit();
 
     DetouredFunctions_.clear();
@@ -302,18 +320,14 @@ bool Hooks::Init() {
     // GetReg Hook
     // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x42, &GetRegisterValHook);
 
-
     // GetPC Hook
     // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x46, &GetPcHook);
 
     // SetPC Hook
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x47, &SetPcHook);
 
-    // ConnLiveKernelTargetInfo::DoResdVirtualMemory Hook
-    RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0xC2, &DoReadVirtualMemoryHook);
-
     // ConnLiveKernelTargetInfo::DoWriteVirtualMemory
-    RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0xC3, &DoWriteVirtualMemoryHook);
+    // RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0xC3, &DoWriteVirtualMemoryHook);
 
 
     RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0x1E, &LiveKernelTargetInfoCached__ReadVirtualHook);

@@ -218,9 +218,13 @@ private:
 
 	bool ReverseStepOver_ = false;
 
+	bool IsReverseStepInto_ = false;
+
 	bool ReachedRevertEnd_ = false;
 
 	bool DisableBugCheckHook_ = false;
+
+	std::optional<Checkpoint_t> QueuedCheckPoint_ = std::nullopt;
 
 	std::vector<Checkpoint_t>       CheckPoints_;
 };

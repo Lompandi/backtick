@@ -23,6 +23,10 @@ std::string LossyUTF16ToASCII(const std::u16string& utf16) {
 bool ExecuteHook(const std::u16string& Command) {
     std::u16string cmdStr = Command;
 
+    if (cmdStr.empty()) {
+        return true;
+    }
+
     switch (cmdStr[0]) {
     case 'g': {
         // g[a] [= StartAddress] [BreakAddress ... [; BreakCommands]]
@@ -38,27 +42,17 @@ bool ExecuteHook(const std::u16string& Command) {
             if (params.breakAddresses.empty()) {
                 g_Emulator.Run();
             }
-            else {
-                for (auto addr : params.breakAddresses) {
-                    if (params.useHardwareBreakpoint) {
-
-                    }
-                    else {
-
-                    }
-                    std::println("[*] Setting breakpoint at: {:#x}", addr);
-                    g_Emulator.Run(addr);
-                }
-            }
-
-            std::println("[*] Execution stopped at: {:#x}", g_Emulator.Rip());
         }
         else if (Command == u"gu") {
             g_Emulator.GoUp();
         }
-        else if (Command.starts_with(u"g-")) {
-            g_Emulator.ReverseGo();
+        else {
+            std::println("Does not support this run mode currently");
+            return true;
         }
+        //else if (Command.starts_with(u"g-")) {
+            //g_Emulator.ReverseGo();
+        // }
         break;
     }
     case 't': {
@@ -93,17 +87,7 @@ bool ExecuteHook(const std::u16string& Command) {
             g_Emulator.InsertCodeBreakpoint(address);
         }
         else if (Command.starts_with(u"bl")) {
-            std::string narrow_command = LossyUTF16ToASCII(Command.substr(3));
-            if (narrow_command.empty()) {
-                g_Emulator.ListBreakpoint();
-            }
-            else {
-                std::stringstream ss_command(narrow_command);
-                std::string id;
-                while (ss_command >> id) {
-                    // TODO
-                }
-            }
+            g_Emulator.ListBreakpoint();
         }
         else if (Command.starts_with(u"bc")) {
             std::string narrow_command = LossyUTF16ToASCII(Command.substr(3));

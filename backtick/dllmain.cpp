@@ -61,6 +61,10 @@ DECLARE_API(shadow) {
     // Prepare emulator cpu state.
     //
 
+    if (InShadowState) {
+        return;
+    }
+
     CpuState_t CurrentState; 
     g_Debugger.LoadCpuStateTo(CurrentState);
 

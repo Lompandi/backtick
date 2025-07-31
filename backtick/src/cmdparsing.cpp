@@ -1,6 +1,7 @@
 #include "cmdparsing.hpp"
 
 #include "emulator.hpp"
+#include "debugapi.h"
 #include "globals.hpp"
 
 std::string LossyUTF16ToASCII(const std::u16string& utf16) {
@@ -83,7 +84,40 @@ bool ExecuteHook(const std::u16string& Command) {
         break;
     }
     case 'b': {
-        
+        if (Command.starts_with(u"bp")) {
+            std::string narrow_command = LossyUTF16ToASCII(Command.substr(3));
+            if (narrow_command.empty()) {
+                break;
+            }
+            std::uint64_t address = g_Debugger.Evaluate(narrow_command, DEBUG_VALUE_INT64).I64;
+            g_Emulator.InsertCodeBreakpoint(address);
+        }
+        else if (Command.starts_with(u"bl")) {
+            std::string narrow_command = LossyUTF16ToASCII(Command.substr(3));
+            if (narrow_command.empty()) {
+                g_Emulator.ListBreakpoint();
+            }
+            else {
+                std::stringstream ss_command(narrow_command);
+                std::string id;
+                while (ss_command >> id) {
+                    // TODO
+                }
+            }
+        }
+        else if (Command.starts_with(u"bc")) {
+            std::string narrow_command = LossyUTF16ToASCII(Command.substr(3));
+            if (narrow_command.empty()) {
+                break;
+            }
+            else {
+                std::stringstream ss_command(narrow_command);
+                std::string id;
+                while (ss_command >> id) {
+                    g_Emulator.RemoveCodeBreakpoint(std::stoul(id));
+                }
+            }
+        }
         break;
     }
     default: {

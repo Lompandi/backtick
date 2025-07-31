@@ -599,6 +599,13 @@ std::optional<uint32_t> Emulator::LocateFreeBreakpointId() {
 	return {};
 }
 
+void Emulator::ListBreakpoint() const {
+	for (const auto& [Id, Address] : BreakpointIdToAddress_) {
+		std::println("     {} e\t\t{:016x}\t{}",
+			Id, Address, g_Debugger.GetName(Address, true));
+	}
+}
+
 bool Emulator::RemoveCodeBreakpoint(uint32_t Index) {
 	if (!BreakpointIdToAddress_.contains(Index)) {
 		return false;

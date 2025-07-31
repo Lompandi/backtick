@@ -80,6 +80,8 @@ public:
 
 	bool IsGvaMapped(std::uint64_t VirtualAddress) const;
 
+	void ListBreakpoint() const;
+
 	bool RemoveCodeBreakpoint(uint32_t Index);
 
 	bool InsertCodeBreakpoint(std::uint64_t Address);

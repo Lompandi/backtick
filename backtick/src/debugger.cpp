@@ -339,6 +339,12 @@ uint64_t Debugger_t::GetDbgSymbol(const char* Name) const {
     return Offset;
 }
 
+DEBUG_VALUE Debugger_t::Evaluate(std::string_view Expr, ULONG DesireType) const {
+    DEBUG_VALUE Value = { 0 };
+    Control_->Evaluate(Expr.data(), DesireType, &Value, NULL);
+    return Value;
+}
+
 bool Debugger_t::LoadCpuStateTo(CpuState_t& State) const {
     State.Rax = Reg64("rax");
     State.Rbx = Reg64("rbx");

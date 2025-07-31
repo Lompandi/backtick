@@ -79,6 +79,8 @@ public:
 	
 	DEBUG_VALUE Reg(std::string_view Name) const;
 
+	DEBUG_VALUE Evaluate(std::string_view Expr, ULONG DesireType) const;
+
 	std::vector<DEBUG_VALUE>
 		Regs(const std::vector<std::string_view>& Targets) const;
 

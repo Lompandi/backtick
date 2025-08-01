@@ -75,7 +75,7 @@ public:
 
 	std::uint8_t VirtRead1(std::uint64_t Gva)  const;
 
-	void DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len);
+	// void DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len);
 
 	bool DirtyGpaPage(const std::uint64_t Gpa);
 
@@ -118,6 +118,8 @@ public:
 	std::uint64_t GetArgAddress(const uint64_t Idx) const;
 
 	void PrintSimpleStepStatus() const;
+
+	bool ReachRevertEnd() const { return ReachedRevertEnd_; }
 
 private:
 

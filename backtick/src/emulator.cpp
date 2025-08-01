@@ -12,7 +12,7 @@ std::size_t g_LastInstructionExecuted = 0;
 
 long long g_RelativeOffset = 1;
 bool CreateCheckPoint_ = true;
-constexpr bool BochsDebugging = false;
+constexpr bool BochsDebugging = true;
 constexpr uint32_t MaxBreakpointCount = 300;
 
 template <typename... Args_t>
@@ -34,7 +34,7 @@ static constexpr std::uint64_t PageAlign(std::uint64_t Address) {
 
 void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 
-	BochsDbg("Mapping GPA: {:#x}", Gpa);
+	BochsDbg("Mapping GPA: {:#x}\n", Gpa);
 
 	//
 	// Align the GPA.
@@ -45,7 +45,7 @@ void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 	const void* PhyPage
 		= g_Emulator.GetPhysicalPage(AlignedGpa);
 	if (PhyPage == nullptr) {
-		BochsDbg("Failed to fetch memory for {:#x}", Gpa);
+		BochsDbg("Failed to fetch memory for {:#x}\n", Gpa);
 	}
 
 	static std::size_t Left = 0;
@@ -73,7 +73,7 @@ void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 	Current += Page::Size;
 
 	if (Page == nullptr) {
-		BochsDbg("Failed to allocate memory in GpaMissingHandler.");
+		BochsDbg("Failed to allocate memory in GpaMissingHandler.\n");
 		__debugbreak();
 	}
 
@@ -95,7 +95,7 @@ void Emulator::StaticGpaMissingHandler(const std::uint64_t Gpa) {
 bool Emulator::IsGvaMapped(std::uint64_t VirtualAddress) const {
 	std::uint64_t Gpa = 0;
 	if (!VirtTranslate(VirtualAddress, Gpa)) {
-		BochsDbg("[*] Translation for GVA {:#x} failed", VirtualAddress);
+		BochsDbg("[*] Translation for GVA {:#x} failed\n", VirtualAddress);
 		return false;
 	}
 	return MappedPhyPages_.contains(AlignPage(Gpa)); 
@@ -221,7 +221,7 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	//
 	// Install bugcheck callback
 	//
-	AddHook(g_Debugger.GetDbgSymbol("nt!KeBugCheckEx"), [&](Emulator* Emu) {
+	AddHook(g_Debugger.GetDbgSymbol("nt!KeBugCheck2"), [&](Emulator* Emu) {
 		if (DisableBugCheckHook_) {
 			return;
 		}
@@ -272,6 +272,7 @@ std::uint64_t Emulator::GetArg(unsigned int Index) const {
 }
 
 void Emulator::Run(const std::uint64_t EndAddress) {
+
 	//
 	// Clear revert status
 	//
@@ -287,7 +288,7 @@ void Emulator::Run(const std::uint64_t EndAddress) {
 	// Lift off.
 	//
 
-	BochsDbg("Emulation start.");
+	BochsDbg("Emulation start.\n");
 
 	bochscpu_cpu_run(Cpu_, HookChain_);
 }
@@ -466,7 +467,7 @@ void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
 	// Stop if exceed maxium instruction executed allowed
 	//
 	if (InstructionLimit_ && InstructionExecutedCount_ >= InstructionLimit_) {
-		BochsDbg("Reached execution limit, stopping emulator...");
+		BochsDbg("Reached execution limit, stopping emulator...\n");
 		Stop(0);
 	}
 
@@ -474,7 +475,7 @@ void Emulator::BeforeExecutionHook(uint32_t, void* Ins) {
 	// Stop the cpu if we reached end address.
 	//
 	if (bochscpu_cpu_rip(Cpu_) == ExecEndAddress_) [[unlikely]] {
-		BochsDbg("Reached end address, stopping emulator...");
+		BochsDbg("Reached end address, stopping emulator...\n");
 		Stop(0);
 	}
 
@@ -536,7 +537,7 @@ bool Emulator::DirtyGpaPage(const std::uint64_t Gpa) {
 	return true;
 }
 
-void Emulator::DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len) {
+/*void Emulator::DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len) {
 
 	const std::uint64_t EndGpa = Gpa + Len;
 	for (auto AlignedGpa = PageAlign(Gpa); AlignedGpa < EndGpa;
@@ -544,7 +545,7 @@ void Emulator::DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len) {
 
 		DirtyGpaPage(AlignedGpa);
 	}
-}
+}*/
 
 void Emulator::PhyAccessHook(uint32_t,
 	uint64_t PhysicalAddress, uintptr_t Len,
@@ -556,7 +557,7 @@ void Emulator::PhyAccessHook(uint32_t,
 		return;
 	}
 
-	DirtyPhysicalMemoryRange(PhysicalAddress, Len);
+	// DirtyPhysicalMemoryRange(PhysicalAddress, Len);
 }
 
 void Emulator::InterruptHook(uint32_t, uint32_t Vector) {
@@ -565,7 +566,7 @@ void Emulator::InterruptHook(uint32_t, uint32_t Vector) {
 	// Hit an exception, dump it on stdout.
 	//
 
-	BochsDbg("InterruptHook: Vector({:#x})", Vector);
+	BochsDbg("InterruptHook: Vector({:#x})\n", Vector);
 
 	//
 	// If we trigger a breakpoint it's probably time to stop the cpu.
@@ -674,6 +675,7 @@ void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 	}
 
 	if (IsCallinstruction((uint8_t*)&Opcode)) [[unlikely]] {
+		std::println("{} calling {}", g_Debugger.GetName(Rip, true), g_Debugger.GetName(NextRip, true));
 		CallTrace_.emplace_back(
 			bochscpu_cpu_rsp(Cpu_),
 			VirtRead8(bochscpu_cpu_rsp(Cpu_)),
@@ -681,7 +683,9 @@ void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 	}
 
 	if (IsRetInstruction((uint8_t*)&Opcode)) {
-		CallTrace_.pop_back();
+		if (!CallTrace_.empty()) {
+			CallTrace_.pop_back();
+		}
 	}
 
 	Opcode = VirtRead2(PrevRip_);
@@ -744,8 +748,6 @@ void Emulator::ReverseGo() {
 	DisableBugCheckHook_ = true;
 
 	while (CheckPoints_.size() > 1) {
-		// std::print("Checkpoing size: {}      \r", CheckPoints_.size());
-
 		auto PrevState = CheckPoints_.back(); 
 		CheckPoints_.pop_back();
 

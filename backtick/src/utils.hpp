@@ -13,9 +13,9 @@ void Hexdump(const void* data, size_t size);
 
 struct CpuState_t;
 
-std::uint64_t ScanPattern(const std::vector<int>& pattern, std::uint64_t maxScanLength = 0x1000000);
+//172.29.44.148
 
-std::uint64_t ScanPattern(const std::string& pattern, std::uint64_t maxScanLength = 0x1000000);
+uintptr_t ScanForSignature(const char* szModule, const char* szSignature);
 
 template <typename T>
 bool ExtractBit(const T& value, std::size_t bitPos) {

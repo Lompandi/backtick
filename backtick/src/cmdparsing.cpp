@@ -4,6 +4,8 @@
 #include "debugapi.h"
 #include "globals.hpp"
 
+constexpr bool ExperimentalFeaturesEnabled = true;
+
 std::string LossyUTF16ToASCII(const std::u16string& utf16) {
     std::string ascii;
     ascii.reserve(utf16.size());
@@ -46,7 +48,7 @@ bool ExecuteHook(const std::u16string& Command) {
         else if (Command == u"gu") {
             g_Emulator.GoUp();
         }
-        else if (Command.starts_with(u"g-")) {
+        else if (Command.starts_with(u"g-") && ExperimentalFeaturesEnabled) {
             g_Emulator.ReverseGo();
         }
         else {
@@ -57,12 +59,18 @@ bool ExecuteHook(const std::u16string& Command) {
     }
     case 't': {
         if (Command.starts_with(u"t-")) {
-            uint64_t Count = 0;
-            Count = g_Debugger.Evaluate(
-                LossyUTF16ToASCII(Command.substr(3)),
-                DEBUG_VALUE_INT64).I64;
+            uint64_t Count = 1;
+
+            if (Command.size() > 2) {
+                Count = g_Debugger.Evaluate(
+                    LossyUTF16ToASCII(Command.substr(2)),
+                    DEBUG_VALUE_INT64).I64;
+            }
 
             for (auto i = 0; i < Count; i++) {
+                if (g_Emulator.ReachRevertEnd()) {
+                    break;
+                }
                 g_Emulator.ReverseStepInto();
                 g_Emulator.PrintSimpleStepStatus();
             }

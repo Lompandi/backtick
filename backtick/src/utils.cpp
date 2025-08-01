@@ -1,41 +1,63 @@
 
 #include "utils.hpp"
 
+#include <psapi.h>
+
 #include <fstream>
 
 #include "globals.hpp"
 
-std::uint64_t ScanPattern(const std::vector<int>& pattern, std::uint64_t maxScanLength) {
-    std::uint64_t baseAddr = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
-    for (std::uint64_t i = 0; i < maxScanLength; i++) {
-        bool found = true;
+#define INRANGE(x, a, b) (x >= a && x <= b)
+#define GET_BYTE(x) (GET_BITS(x[0]) << 4 | GET_BITS(x[1]))
+#define GET_BITS(x) (INRANGE((x & (~0x20)), 'A', 'F') ? ((x & (~0x20)) - 'A' + 0xa) : (INRANGE(x, '0', '9') ? x - '0' : 0))
 
-        for (size_t j = 0; j < pattern.size(); j++) {
-            if (pattern[j] != -1 && *(std::uint8_t*)(baseAddr + i + j) != pattern[j]) {
-                found = false;
-                break;
-            }
-        }
+uintptr_t ScanForSignature(const char* Module, const char* Signature) {
+	const char* pattern = Signature;
+	uintptr_t firstMatch = 0;
+	static const auto rangeStart = (uintptr_t)GetModuleHandleA(Module);
+	static MODULEINFO miModInfo;
+	static bool init = false;
+	if (!init) {
+		init = true;
+		GetModuleInformation(GetCurrentProcess(), (HMODULE)rangeStart, &miModInfo, sizeof(MODULEINFO));
+	}
+	static const uintptr_t rangeEnd = rangeStart + miModInfo.SizeOfImage;
 
-        if (found) return baseAddr + i;
-    }
+	BYTE patByte = GET_BYTE(pattern);
+	const char* oldPat = pattern;
 
-    return -1;
-}
+	for (uintptr_t pCur = rangeStart; pCur < rangeEnd; pCur++) {
+		if (!*pattern)
+			return firstMatch;
 
-std::uint64_t ScanPattern(const std::string& pattern, std::uint64_t maxScanLength) {
-    std::stringstream ss_pattern(pattern);
-    std::string token;
-    std::vector<int> processed_pattern;
-    while (ss_pattern >> token) {
-        if (token.starts_with("?")) {
-            processed_pattern.push_back(-1);
-        }
-        else {
-            processed_pattern.push_back(std::stoi(token, nullptr, 16));
-        }
-    }
-    return ScanPattern(processed_pattern, maxScanLength);
+		while (*(PBYTE)pattern == ' ')
+			pattern++;
+
+		if (!*pattern)
+			return firstMatch;
+
+		if (oldPat != pattern) {
+			oldPat = pattern;
+			if (*(PBYTE)pattern != '\?')
+				patByte = GET_BYTE(pattern);
+		}
+
+		if (*(PBYTE)pattern == '\?' || *(BYTE*)pCur == patByte) {
+			if (!firstMatch)
+				firstMatch = pCur;
+
+			if (!pattern[2] || !pattern[1])
+				return firstMatch;
+
+			pattern += 2;
+		}
+		else {
+			pattern = Signature;
+			firstMatch = 0;
+		}
+	}
+
+	return 0u;
 }
 
 void Hexdump(const void* data, size_t size) {

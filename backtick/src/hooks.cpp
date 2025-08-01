@@ -10,6 +10,7 @@
 #include "emulator.hpp"
 #include "cmdparsing.hpp"
 #include <iostream>
+#include <cassert>
 
 Hooks g_Hooks;
 
@@ -27,15 +28,15 @@ constexpr std::uint64_t WaitStateChangeOffset        = 0x1A118C;
 constexpr std::uint64_t DbsSplayTreeCacheFlushOffset = 0x487D18;
 
 // LiveKernelTargetInfoCached::ReadVirtual
-constexpr std::uint64_t ReadVirtualOffset = 0x1171E0;
+uintptr_t ReadVirtualAddress = 0;
 using ReadVirtualOffset_t = HRESULT(__fastcall*)(void*, void*, uint64_t, void*, uint32_t, uint32_t*);
 static ReadVirtualOffset_t OriginalReadVirtual = nullptr;
 
-constexpr std::uint64_t GetRegValOffset              = 0xA1CC0;
+uintptr_t GetRegValAddress = 0;
 using GetRegisterVal_t = HRESULT(__fastcall*)(void*, ULONG, REGVAL*);
 static GetRegisterVal_t OriginalGetRegisterVal = nullptr;
 
-constexpr std::uint64_t WriteVirtualOffset = 0x119EC0;
+std::uint64_t WriteVirtualAddress = 0;
 using WriteVirtual_t = HRESULT(__fastcall*)(void*, void*, uint64_t, void*, uint32_t, uint32_t*);
 static WriteVirtual_t OriginalWriteVirtual = nullptr;
 
@@ -46,7 +47,7 @@ struct _ADDR {
     std::uint64_t Unk1;
 };
 
-constexpr std::uint64_t GetPcOffset = 0xA0AD0;
+std::uint64_t GetPcAddress = 0;
 using GetPc_t = HRESULT(__fastcall*)(std::uint64_t, _ADDR*);
 static GetPc_t OriginalGetPcVal = nullptr;
 
@@ -228,11 +229,11 @@ bool Hooks::Enable() {
     DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
 
     OriginalGetPcVal = reinterpret_cast<GetPc_t>(AddDetour(
-        (void*)(DbgEngBase + GetPcOffset), (void*)GetPcHook
+        (void*)(GetPcAddress), (void*)GetPcHook
     ));
 
     OriginalGetRegisterVal = reinterpret_cast<GetRegisterVal_t>(AddDetour(
-        (void*)(DbgEngBase + GetRegValOffset), (void*)GetRegisterValHook
+        (void*)(GetRegValAddress), (void*)GetRegisterValHook
     ));
 
     OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
@@ -240,11 +241,11 @@ bool Hooks::Enable() {
     ));
 
     OriginalReadVirtual = reinterpret_cast<ReadVirtualOffset_t>(AddDetour(
-        (void*)(DbgEngBase + ReadVirtualOffset), (void*)ReadVirtualHook
+        (void*)(ReadVirtualAddress), (void*)ReadVirtualHook
     ));
 
     OriginalWriteVirtual = reinterpret_cast<WriteVirtual_t>(AddDetour(
-        (void*)(DbgEngBase + WriteVirtualOffset), (void*)WriteVirtualHook
+        (void*)(WriteVirtualAddress), (void*)WriteVirtualHook
     ));
 
     return true;
@@ -292,8 +293,40 @@ bool Hooks::Restore() {
     return true;
 }
 
+/*
+48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 33 DB 4D 8B D1 49 8B F0 4C 8B D9 48 85 D2 0F 84 ?? ?? ?? ??                       
+*/
+
+/*
+48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 48 8B 01 49 8B D8 8B EA
+*/
+
+/*
+40 53 48 83 EC ?? 4D 8B D1 4D 8B D8 48 8B D9 48 85 D2 74 ?? 83 BA 4C ?? ?? ?? ??
+*/
+
+/*
+48 83 EC ?? 48 89 54 24 ?? BA ?? ?? ?? ?? 44 8B CA 44 8D 42 ??
+*/
+
+/*
+48 8B C4 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 48 C7 44 24 ?? ?? ?? ?? FF 48 89 58 ??
+48 8B 05 40 6F 79 00                    mov     rax, cs:__security_cookie
+48 33 C4                                xor     rax, rsp
+48 89 85 B0 03 00 00
+*/
+
 bool Hooks::Init() {
 	std::uintptr_t DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
+
+    // LiveKernelTargetInfoCached::ReadVirtual
+    ReadVirtualAddress = ScanForSignature("dbgeng.dll", "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 33 DB 4D 8B D1 49 8B F0 4C 8B D9 48 85 D2 0F 84 ?? ?? ?? ??");
+
+    GetRegValAddress = ScanForSignature("dbgeng.dll", "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 48 8B 01 49 8B D8 8B EA");
+
+    WriteVirtualAddress = ScanForSignature("dbgeng.dll", "40 53 48 83 EC ?? 4D 8B D1 4D 8B D8 48 8B D9 48 85 D2 74 ?? 83 BA 4C");
+
+    GetPcAddress = ScanForSignature("dbgeng.dll", "48 83 EC ?? 48 89 54 24 ?? BA ?? ?? ?? ?? 44 8B CA 44 8D 42 ??");
 
     DbsSplayTreeCacheFlushAddress = (void*)(DbgEngBase + DbsSplayTreeCacheFlushOffset);
 

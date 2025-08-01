@@ -171,6 +171,16 @@ void Emulator::StaticUcFarBranchHook(void* Context, uint32_t Cpu, uint32_t What,
 // //vgk+0x95754
 bool Emulator::Initialize(const CpuState_t& State) {
 
+	fs::path TempDir = fs::temp_directory_path();
+	fs::path TraceFilePath = TempDir / "trace.bt";
+
+	// Check if file exists. If so, remove it.
+	if (fs::exists(TraceFilePath)) {
+		fs::remove(TraceFilePath);
+	}
+
+	FileStream_.SetFilePath(TraceFilePath.generic_string());
+
 	//
 	// Create a cpu.
 	//
@@ -206,6 +216,7 @@ bool Emulator::Initialize(const CpuState_t& State) {
 	//
 
 	LoadState(State);
+	AddNewCheckPoint();
 
 	//
 	// Install bugcheck callback
@@ -222,9 +233,12 @@ bool Emulator::Initialize(const CpuState_t& State) {
 		const uint64_t B3 = GetArg(4);
 
 		std::println("*** Fatal System Error: {:#08x}", BCode);
-		std::println("                       ({:#10x},{:#10x},{:#10x},{:#10x})",
-			B0, B1, B2, B3);
+		std::println("\tKeBugCheckEx({:#016x}, {:#016x}, {:#016x}, {:#016x}, {:#016x})",
+			BCode, B0, B1, B2, B3);
+		std::println("\tError Type: {}", BugCheckCodeNames.at(BCode));
+		std::print("\n");
 		std::println("A fatal system error has occurred.");
+		std::println("\tUse !unshadow to return to the original debugger, or run g-, t-, or p- to unwind machine state.");
 		Stop(1);
 	});
 
@@ -413,10 +427,6 @@ void Emulator::AfterExecutionHook(uint32_t, void*) {
 	InstructionExecutedCount_ += 1;
 	g_LastInstructionExecuted += 1;
 
-	if (g_RelativeOffset > 0) {
-		PcTrace_.push_back(Rip());
-	}
-
 	// std::println("[*] Executing {:#x}", Rip());
 
 	PrevPrevRip_ = PrevRip_;
@@ -589,6 +599,16 @@ void Emulator::CNearBranchHook(uint32_t Cpu, uint64_t Rip,
 void Emulator::Stop(int value) {
 	InstructionExecutedCount_ = 0;
 	ExecEndAddress_ = 0;
+
+	RunTillBranch_ = false;
+	GoingUp_ = false;
+	StepOver_ = false;
+	ReverseStepOver_ = false;
+	IsReverseStepInto_ = false;
+	ReachedRevertEnd_ = false;
+	DisableBugCheckHook_ = false;
+
+
 	bochscpu_cpu_stop(Cpu_); 
 }
 
@@ -653,6 +673,17 @@ void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 		// std::println("Rip: {:#x}", ReturnAddress);
 	}
 
+	if (IsCallinstruction((uint8_t*)&Opcode)) [[unlikely]] {
+		CallTrace_.emplace_back(
+			bochscpu_cpu_rsp(Cpu_),
+			VirtRead8(bochscpu_cpu_rsp(Cpu_)),
+			NextRip);
+	}
+
+	if (IsRetInstruction((uint8_t*)&Opcode)) {
+		CallTrace_.pop_back();
+	}
+
 	Opcode = VirtRead2(PrevRip_);
 	if (GoingUp_ && IsRetInstruction((uint8_t*)&Opcode)) {
 		BochsDbg("[*] Reached branch instruction, stopping cpu...\n");
@@ -705,54 +736,57 @@ void Emulator::GoUp() {
 }
 
 
-/*
 void Emulator::ReverseGo() {
 	if (ReachedRevertEnd_) {
 		return;
 	}
 
-	CreateCheckPoint_ = false;
 	DisableBugCheckHook_ = true;
 
 	while (CheckPoints_.size() > 1) {
-		auto PDst = CheckPoints_.back();
-		CheckPoints_.pop_back();
-		auto PSrc = CheckPoints_.back();
+		// std::print("Checkpoing size: {}      \r", CheckPoints_.size());
 
-		const auto& PrevState = PSrc.CpuState;
-		for (const auto& [Address, Dirty] : PSrc.DirtiedBytes_) {
+		auto PrevState = CheckPoints_.back(); 
+		CheckPoints_.pop_back();
+
+		for (const auto& [Address, Dirty] : PrevState.DirtiedBytes_) {
 			VirtWrite(Address, Dirty.data(), Dirty.size());
 		}
+		
+		// bochscpu_cpu_set_state(Cpu_, &PrevState.CpuState);
+		const auto& PrevCpuState = RestoreCpuStateFromDelta(PrevState.CpuStateDelta_);
 
-		bochscpu_cpu_set_state(Cpu_, &PrevState);
-
-		Run(PDst.CpuState.rip);
+		bochscpu_cpu_set_state(
+			Cpu_,
+			&PrevCpuState);
+		ReverseStepInto();
 	}
 
 	DisableBugCheckHook_ = false;
-	CreateCheckPoint_ = true;
 
 	const auto& PInitial = CheckPoints_.back();
-	const auto& PrevState = PInitial.CpuState;
+	// const auto& PrevState = PInitial.CpuState;
+	const auto& PrevState = RestoreCpuStateFromDelta(PInitial.CpuStateDelta_);
 	for (const auto& [Address, Dirty] : PInitial.DirtiedBytes_) {
 		VirtWrite(Address, Dirty.data(), Dirty.size());
 	}
 
 	bochscpu_cpu_set_state(Cpu_, &PrevState);
-}*/
+}
 
 void Emulator::ReverseStepInto() {
 	if (ReachedRevertEnd_) {
 		return;
 	}
 
-	const auto& PrevState = CheckPoints_.back().CpuState;
-	for (const auto& [Address, Dirty] : CheckPoints_.back().DirtiedBytes_) {
-		std::println("Restoring {}", Hexdump(Dirty.data(), Dirty.size()));
+	const auto& PrevState = CheckPoints_.empty() ? QueuedCheckPoint_.value() : CheckPoints_.back();
+	for (const auto& [Address, Dirty] : PrevState.DirtiedBytes_) {
+		// std::println("Restoring {}", Hexdump(Dirty.data(), Dirty.size()));
 		VirtWrite(Address, Dirty.data(), Dirty.size());
 	}
 
-	bochscpu_cpu_set_state(Cpu_, &PrevState);
+	const auto& PrevCpuState = RestoreCpuStateFromDelta(PrevState.CpuStateDelta_);
+	bochscpu_cpu_set_state(Cpu_, &PrevCpuState);
 
 	IsReverseStepInto_ = true;
 	CreateCheckPoint_ = false;
@@ -767,13 +801,14 @@ void Emulator::ReverseStepInto() {
 	//
 
 	if (g_LastInstructionExecuted < 2) {
-		if (CheckPoints_.size() == 1) {
+		if (CheckPoints_.size() <= 1) {
 			std::println("Reached backstep end");
 			ReachedRevertEnd_ = true;
 			return;
 		}
 
-		PrevPrevRip_ = CheckPoints_.back().CpuState.rip;
+		// PrevPrevRip_ = CheckPoints_.back().CpuState.rip;
+		PrevPrevRip_ = GetPcFromDeltaState(CheckPoints_.back().CpuStateDelta_);
 		CheckPoints_.pop_back();
 	}
 }
@@ -797,6 +832,25 @@ void Emulator::ReverseStepOver() {
 	}
 
 	ReverseStepInto();
+}
+
+void Emulator::PrintStackTrace() const {
+	std::println("# Child-SP          RetAddr               Call Site");
+	int Index = 0;
+	for (auto CallInfo = CallTrace_.rbegin(); CallInfo != CallTrace_.rend(); ++CallInfo) {
+		auto CallSiteFmt = std::format("{:016x}", CallInfo->Callsite);
+		if (const auto& Sym = g_Debugger.GetName(CallInfo->Callsite, true); !Sym.empty()) {
+			CallSiteFmt = Sym;
+		}
+
+		std::println("{} {:016x}  {:016x}      {}",
+			Index,
+			CallInfo->ChildSp,
+			CallInfo->RetAddr,
+			CallSiteFmt);
+		
+		Index += 1;
+	}
 }
 
 const std::uint8_t* Emulator::GetPhysicalPage(const std::uint64_t PhysicalAddress) const {
@@ -934,8 +988,8 @@ void Emulator::AddDirtyToCheckPoint(std::uint64_t Address, std::size_t Size) {
 	std::vector<uint8_t> OriginalData(Size);
 	VirtRead(Address, OriginalData.data(), Size);
 
-	std::println("Writing {} to {:#x}", Hexdump(OriginalData.data(), OriginalData.size()),
-		Address);
+	/*std::println("Writing {} to {:#x}", Hexdump(OriginalData.data(), OriginalData.size()),
+		Address);*/
 
 	if (CheckPoints_.empty()) {
 		QueuedCheckPoint_.value().DirtiedBytes_[Address] = OriginalData;
@@ -1005,7 +1059,6 @@ void Emulator::Reset() {
 	DirtiedPage_.clear();
 	ExecEndAddress_		= 0;
 	InstructionLimit_	= 0;
-	PcTrace_.clear();
 	
 	InstructionExecutedCount_ = 0;
 	MappedPhyPages_.clear();
@@ -1022,10 +1075,36 @@ void Emulator::Reset() {
 	bochscpu_cpu_delete(Cpu_);
 }
 
+std::size_t TotalCheckPointRecorded = 0;
+
+std::string ToHuman(std::uint64_t value) {
+	constexpr std::array units{ "B", "KB", "MB", "GB", "TB", "PB", "EB" };
+	double size = static_cast<double>(value);
+	std::size_t unitIndex = 0;
+
+	while (size >= 1024.0 && unitIndex < units.size() - 1) {
+		size /= 1024.0;
+		++unitIndex;
+	}
+
+	return std::format("{:.{}f} {}", size, size < 10.0 ? 2 : 1, units[unitIndex]);
+}
+
 void Emulator::AddNewCheckPoint() {
 	if(!CreateCheckPoint_){
 		return;
 	}
+
+	TotalCheckPointRecorded += 1;
+	if ((TotalCheckPointRecorded & 0xffff) == 0) {
+
+		// std::println("Writing trace onto disk : {}...", FileStream_.GetFilePath());
+		// FileStream_.WriteTraceToFile(CheckPoints_);
+
+		std::println("[*] Recorded {} checkpoints ~{}", TotalCheckPointRecorded,
+			ToHuman(TotalCheckPointRecorded * sizeof(Checkpoint_t) + 40));
+	}
+
 
 	if (QueuedCheckPoint_) {
 		CheckPoints_.push_back(QueuedCheckPoint_.value());
@@ -1034,7 +1113,38 @@ void Emulator::AddNewCheckPoint() {
 	bochscpu_cpu_state_t State;
 	bochscpu_cpu_state(Cpu_, &State);
 
-	QueuedCheckPoint_ = Checkpoint_t{ State, {} };
+	// QueuedCheckPoint_ = Checkpoint_t{ State, {} };
+	QueuedCheckPoint_ = Checkpoint_t{ CreateCpuStateDelta(State), {} };
+}
+
+CpuStateDelta_t Emulator::CreateCpuStateDelta(const bochscpu_cpu_state_t& PostState) const {
+	CpuStateDelta_t DeltaState;
+
+	for (int i = 0; i < sizeof(bochscpu_cpu_state_t); i += 8) {
+		if (*(uint64_t*)((uint8_t*)&PostState + i) != *(uint64_t*)((uint8_t*)&InitialCpuState_ + i)) {
+			DeltaState.emplace(i, *(uint64_t*)((uint8_t*)&PostState + i));
+		}
+	}
+
+	return DeltaState;
+}
+
+bochscpu_cpu_state_t Emulator::RestoreCpuStateFromDelta(const CpuStateDelta_t& Delta) const {
+	bochscpu_cpu_state_t RestoredState = InitialCpuState_;
+	for (const auto& [Offset, Value] : Delta) {
+		std::memcpy((uint8_t*)&RestoredState + Offset, &Value, 8);
+	}
+	return RestoredState;
+}
+
+std::uint64_t Emulator::GetPcFromDeltaState(const CpuStateDelta_t& Delta) const {
+	constexpr auto RipFieldOffset = offsetof(bochscpu_cpu_state_t, rip);
+
+	if (Delta.contains(RipFieldOffset)) [[likely]] {
+		return Delta.at(RipFieldOffset);
+	}
+
+	return InitialCpuState_.rip;
 }
 
 bool Emulator::AddHook(std::uint64_t Address, Hook_t HookFunc) {
@@ -1143,5 +1253,4 @@ void Emulator::LoadState(const CpuState_t& State) {
 	}
 
 	bochscpu_cpu_set_state(Cpu_, &Bochs);
-	AddNewCheckPoint();
 }

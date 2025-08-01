@@ -56,25 +56,12 @@ static ExecuteCommand_t OriginalExecuteCommand = nullptr;
 
 void* DbsSplayTreeCacheFlushAddress = nullptr;
 
-// 48 e9 ff ff ?? ?? ff ff 
-
-bool SkipEventWait = false;
-
 uint64_t DbgEngBase = 0;
 
 constexpr bool HooksDebugging = false;
 
 std::set<std::uint64_t> g_DbsSplayTreeCacheInstanceAddresses;
 
-
-
-//
-// Block debugger to send packet to target machine when single-stepping
-// TODO:
-//   - DisableNetworkSendingFunction
-// -> hook DbgKdTransport::WaitForPacket (return 0x80b00005 in normal senario)
-// for early return at dbgeng!DbgKdTransport::WriteDataPacket+0x2c5 (0x18011DE28) ?
-//
 
 template <typename... Args_t>
 void HooksDbg(const char* Format, const Args_t &...args) {
@@ -176,7 +163,6 @@ static HRESULT LiveKernelTargetInfoCached__ReadVirtualHook(void* pThis,
 
         if (!g_DbsSplayTreeCacheInstanceAddresses.contains(DbsSplayTreeCacheAddress)) {
             g_DbsSplayTreeCacheInstanceAddresses.insert(DbsSplayTreeCacheAddress);
-            std::println("DbsSplayTreeCache: {:#x}", DbsSplayTreeCacheAddress);
         }
     }
 
@@ -195,7 +181,6 @@ static HRESULT LiveKernelTargetInfoCached__WriteVirtualHook(void* pThis,
 
         if (!g_DbsSplayTreeCacheInstanceAddresses.contains(DbsSplayTreeCacheAddress)) {
             g_DbsSplayTreeCacheInstanceAddresses.insert(DbsSplayTreeCacheAddress);
-            std::println("DbsSplayTreeCache: {:#x}", DbsSplayTreeCacheAddress);
         }
     }
 
@@ -310,24 +295,16 @@ bool Hooks::Restore() {
 bool Hooks::Init() {
 	std::uintptr_t DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
 
-	// std::println("[*] dbgeng.dll: {:#x}", DbgEngBase);
-
     DbsSplayTreeCacheFlushAddress = (void*)(DbgEngBase + DbsSplayTreeCacheFlushOffset);
 
     // SetReg Hook
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x44, &SetRegisterValHook);
-
-    // GetReg Hook
-    // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x42, &GetRegisterValHook);
 
     // GetPC Hook
     // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x46, &GetPcHook);
 
     // SetPC Hook
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x47, &SetPcHook);
-
-    // ConnLiveKernelTargetInfo::DoWriteVirtualMemory
-    // RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0xC3, &DoWriteVirtualMemoryHook);
 
 
     RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0x1E, &LiveKernelTargetInfoCached__ReadVirtualHook);

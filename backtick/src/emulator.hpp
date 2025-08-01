@@ -11,6 +11,8 @@
 #include "globals.hpp"
 #include <set>
 
+#include "tracefile.hpp"
+
 //
 // Stolen from Axel Souchet - 0verclock's snapshot emulator project :p
 // https://github.com/0vercl0k/wtf/blob/main/src/wtf/bochscpu_backend.cc
@@ -20,9 +22,18 @@ class Emulator;
 
 using Hook_t = std::function<void(Emulator*)>;
 
+using CpuStateDelta_t = std::unordered_map<std::uint64_t, std::uint64_t>;
+
 struct Checkpoint_t {
-	bochscpu_cpu_state_t CpuState;
+	// bochscpu_cpu_state_t CpuState;
+	CpuStateDelta_t CpuStateDelta_;
 	std::unordered_map<std::uint64_t, std::vector<std::uint8_t>> DirtiedBytes_;
+};
+
+struct CallInfoFrame {
+	std::uint64_t ChildSp;
+	std::uint64_t RetAddr;
+	std::uint64_t Callsite;
 };
 
 class Emulator {
@@ -62,7 +73,7 @@ public:
 
 	std::uint16_t VirtRead2(std::uint64_t Gva) const;
 
-	std::uint8_t VirtRead1(std::uint64_t Gva) const;
+	std::uint8_t VirtRead1(std::uint64_t Gva)  const;
 
 	void DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len);
 
@@ -86,7 +97,7 @@ public:
 
 	bool InsertCodeBreakpoint(std::uint64_t Address);
 
-	// void ReverseGo();
+	void ReverseGo();
 
 	void ReverseStepInto();
 
@@ -100,6 +111,8 @@ public:
 
 	bool AddHook(std::uint64_t Address, Hook_t HookFunc);
 
+	void PrintStackTrace() const;
+
 	std::uint64_t GetArg(unsigned int Index) const;
 
 	std::uint64_t GetArgAddress(const uint64_t Idx) const;
@@ -107,6 +120,12 @@ public:
 	void PrintSimpleStepStatus() const;
 
 private:
+
+	CpuStateDelta_t CreateCpuStateDelta(const bochscpu_cpu_state_t& PostState) const;
+
+	bochscpu_cpu_state_t RestoreCpuStateFromDelta(const CpuStateDelta_t& Delta) const;
+
+	std::uint64_t GetPcFromDeltaState(const CpuStateDelta_t& Delta) const;
 
 	void LoadState(const CpuState_t& State);
 	
@@ -190,7 +209,7 @@ private:
 
 	std::uint64_t InstructionExecutedCount_;
 
-	std::uint64_t MaxiumInstructionLimit_ = 1'500'000;
+	std::uint64_t MaxiumInstructionLimit_ = 1550000;
 
 	std::uint64_t InstructionLimit_ = 0;
 
@@ -208,25 +227,29 @@ private:
 
 	std::uint64_t PrevRip_ = 0;
 
-	std::deque<std::uint64_t> PcTrace_;
-
 	bool RunTillBranch_ = false;
 
 	bool GoingUp_ = false; //stop after return
 
 	bool StepOver_ = false;
 
-	bool ReverseStepOver_ = false;
+	bool ReverseStepOver_		= false;
 
-	bool IsReverseStepInto_ = false;
+	bool IsReverseStepInto_		= false;
 
-	bool ReachedRevertEnd_ = false;
+	bool ReachedRevertEnd_		= false;
 
-	bool DisableBugCheckHook_ = false;
+	bool DisableBugCheckHook_	= false;
 
 	std::optional<Checkpoint_t> QueuedCheckPoint_ = std::nullopt;
 
-	std::vector<Checkpoint_t>       CheckPoints_;
+	std::deque<Checkpoint_t>	CheckPoints_;
+
+	std::vector<CallInfoFrame>  CallTrace_;
+
+	bochscpu_cpu_state_t InitialCpuState_;
+
+	TraceFileStream FileStream_;
 };
 
 using TimeFrames_t = std::map<unsigned int, CpuState_t>;

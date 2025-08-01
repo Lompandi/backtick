@@ -46,19 +46,26 @@ bool ExecuteHook(const std::u16string& Command) {
         else if (Command == u"gu") {
             g_Emulator.GoUp();
         }
+        else if (Command.starts_with(u"g-")) {
+            g_Emulator.ReverseGo();
+        }
         else {
             std::println("Does not support this run mode currently");
             return true;
         }
-        //else if (Command.starts_with(u"g-")) {
-            //g_Emulator.ReverseGo();
-        // }
         break;
     }
     case 't': {
         if (Command.starts_with(u"t-")) {
-            g_Emulator.ReverseStepInto();
-            g_Emulator.PrintSimpleStepStatus();
+            uint64_t Count = 0;
+            Count = g_Debugger.Evaluate(
+                LossyUTF16ToASCII(Command.substr(3)),
+                DEBUG_VALUE_INT64).I64;
+
+            for (auto i = 0; i < Count; i++) {
+                g_Emulator.ReverseStepInto();
+                g_Emulator.PrintSimpleStepStatus();
+            }
         }
         else if (Command.starts_with(u"t")) {
             g_Emulator.StepInto();
@@ -84,6 +91,11 @@ bool ExecuteHook(const std::u16string& Command) {
                 break;
             }
             std::uint64_t address = g_Debugger.Evaluate(narrow_command, DEBUG_VALUE_INT64).I64;
+            if (!address) {
+                std::println("Bp expression '{}' could not be resolved", narrow_command);
+                std::println("*** Bp expression '{}' contains symbols not qualified with module name.", narrow_command);
+                return true;
+            }
             g_Emulator.InsertCodeBreakpoint(address);
         }
         else if (Command.starts_with(u"bl")) {
@@ -102,6 +114,10 @@ bool ExecuteHook(const std::u16string& Command) {
                 }
             }
         }
+        break;
+    }
+    case 'k': {
+        g_Emulator.PrintStackTrace();
         break;
     }
     default: {

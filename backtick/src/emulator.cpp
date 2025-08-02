@@ -12,7 +12,7 @@ std::size_t g_LastInstructionExecuted = 0;
 
 long long g_RelativeOffset = 1;
 bool CreateCheckPoint_ = true;
-constexpr bool BochsDebugging = true;
+constexpr bool BochsDebugging = false;
 constexpr uint32_t MaxBreakpointCount = 300;
 
 template <typename... Args_t>
@@ -170,17 +170,6 @@ void Emulator::StaticUcFarBranchHook(void* Context, uint32_t Cpu, uint32_t What,
 
 // //vgk+0x95754
 bool Emulator::Initialize(const CpuState_t& State) {
-
-	fs::path TempDir = fs::temp_directory_path();
-	fs::path TraceFilePath = TempDir / "trace.bt";
-
-	// Check if file exists. If so, remove it.
-	if (fs::exists(TraceFilePath)) {
-		fs::remove(TraceFilePath);
-	}
-
-	FileStream_.SetFilePath(TraceFilePath.generic_string());
-
 	//
 	// Create a cpu.
 	//
@@ -537,16 +526,6 @@ bool Emulator::DirtyGpaPage(const std::uint64_t Gpa) {
 	return true;
 }
 
-/*void Emulator::DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len) {
-
-	const std::uint64_t EndGpa = Gpa + Len;
-	for (auto AlignedGpa = PageAlign(Gpa); AlignedGpa < EndGpa;
-		AlignedGpa += Page::Size) {
-
-		DirtyGpaPage(AlignedGpa);
-	}
-}*/
-
 void Emulator::PhyAccessHook(uint32_t,
 	uint64_t PhysicalAddress, uintptr_t Len,
 	uint32_t, uint32_t MemAccess) {
@@ -631,6 +610,11 @@ void Emulator::ListBreakpoint() const {
 	}
 }
 
+const std::unordered_map<uint32_t, std::uint64_t>&
+Emulator::GetBreakpoints() const {
+	return BreakpointIdToAddress_;
+}
+
 bool Emulator::RemoveCodeBreakpoint(uint32_t Index) {
 	if (!BreakpointIdToAddress_.contains(Index)) {
 		return false;
@@ -675,7 +659,7 @@ void Emulator::UcNearBranchHook(uint32_t Cpu, uint32_t What,
 	}
 
 	if (IsCallinstruction((uint8_t*)&Opcode)) [[unlikely]] {
-		std::println("{} calling {}", g_Debugger.GetName(Rip, true), g_Debugger.GetName(NextRip, true));
+		// std::println("{} calling {}", g_Debugger.GetName(Rip, true), g_Debugger.GetName(NextRip, true));
 		CallTrace_.emplace_back(
 			bochscpu_cpu_rsp(Cpu_),
 			VirtRead8(bochscpu_cpu_rsp(Cpu_)),
@@ -816,20 +800,18 @@ void Emulator::ReverseStepInto() {
 }
 
 void Emulator::ReverseStepOver() {
-	auto Instr = VirtRead2(PrevRip_);
+	auto Instr = VirtRead2(PrevPrevRip_);
 
 	if (IsRetInstruction((uint8_t*)&Instr)) {
-		auto InitialRsp = bochscpu_cpu_rsp(Cpu_);
-		while (!IsCallinstruction((uint8_t*)&Instr)) {
+		int Offset = 1;
+		while (Offset && !ReachedRevertEnd_) {
 			ReverseStepInto();
-
-			if (IsCallinstruction((uint8_t*)&Instr) && bochscpu_cpu_rsp(Cpu_) == InitialRsp + 8
-				|| ReachedRevertEnd_) {
-				break;
-			}
-
 			Instr = VirtRead2(Rip());
+
+			if (IsCallinstruction((uint8_t*)&Instr)) { Offset -= 1; }
+			else if (IsRetInstruction((uint8_t*)&Instr)) { Offset += 1; }
 		}
+
 		return;
 	}
 
@@ -989,9 +971,6 @@ bool Emulator::GetReg(const Registers_t Reg, REGVAL* Value) const {
 void Emulator::AddDirtyToCheckPoint(std::uint64_t Address, std::size_t Size) {
 	std::vector<uint8_t> OriginalData(Size);
 	VirtRead(Address, OriginalData.data(), Size);
-
-	/*std::println("Writing {} to {:#x}", Hexdump(OriginalData.data(), OriginalData.size()),
-		Address);*/
 
 	if (CheckPoints_.empty()) {
 		QueuedCheckPoint_.value().DirtiedBytes_[Address] = OriginalData;

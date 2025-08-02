@@ -9,6 +9,8 @@
 #include "src/paging.hpp"
 #include "src/utils.hpp"
 #include "src/hooks.hpp"
+#include "src/tui.hpp"
+#include <iostream>
 
 constexpr bool PluginVerbose = false;
 
@@ -24,7 +26,7 @@ void WINAPI WinDbgExtensionDllInit(
     PWINDBG_EXTENSION_APIS ExtensionApis,
     USHORT MajorVersion, 
     USHORT MinorVersion) {
-    
+
     if (!g_Debugger.Init()) {
         std::println("Failed to initialize debugger instance.\n");
         return;
@@ -56,10 +58,15 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     return TRUE;
 }
 
+void EnableVirtualTerminalProcessing() {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dwMode = 0;
+    GetConsoleMode(hOut, &dwMode);
+    dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(hOut, dwMode);
+}
+
 DECLARE_API(shadow) {
-    //
-    // Prepare emulator cpu state.
-    //
 
     if (InShadowState) {
         return;
@@ -77,6 +84,16 @@ DECLARE_API(shadow) {
 
     std::println("Debugger commands are now partially under plugin's control.");
     InShadowState = true;
+   
+    EnableVirtualTerminalProcessing();
+
+    std::print("\x1b[?1049h");
+    std::fflush(stdout);
+
+    SetConsoleOutputCP(CP_UTF8);
+    setlocale(LC_ALL, "");
+
+    g_Tui.RenderFrame();
 }
 
 DECLARE_API(unshadow) {
@@ -103,4 +120,7 @@ DECLARE_API(unshadow) {
     g_Emulator.Reset();
 
     InShadowState = false;
+
+    std::print("\x1b[?1049l");
+    std::fflush(stdout);
 }

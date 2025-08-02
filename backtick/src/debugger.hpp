@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <filesystem>
 #include <unordered_map>
 
@@ -23,6 +24,34 @@ struct PFNEntry {
 	USHORT Flags;
 	ULONG64 PteAddress;
 	ULONG64 OriginalPteValue;
+};
+
+struct DefaultRegistersState {
+	std::uint64_t Rax;
+	std::uint64_t Rbx;
+	std::uint64_t Rcx;
+	std::uint64_t Rdx;
+	std::uint64_t Rsi;
+	std::uint64_t Rdi;
+	std::uint64_t Rip;
+	std::uint64_t Rsp;
+	std::uint64_t Rbp;
+	std::uint64_t R8;
+	std::uint64_t R9;
+	std::uint64_t R10;
+	std::uint64_t R11;
+	std::uint64_t R12;
+	std::uint64_t R13;
+	std::uint64_t R14;
+	std::uint64_t R15;
+	std::uint64_t Iopl;
+	std::uint16_t Cs;
+	std::uint16_t Ds;
+	std::uint16_t Es;
+	std::uint16_t Fs;
+	std::uint16_t Gs;
+	std::uint16_t Ss;
+	std::uint64_t Rflags;
 };
 
 struct CpuState_t;
@@ -84,9 +113,13 @@ public:
 	std::vector<DEBUG_VALUE>
 		Regs(const std::vector<std::string_view>& Targets) const;
 
+	DefaultRegistersState GetDefaultRegisterState() const;
+
 	std::uint64_t Msr(std::uint32_t Index) const;
 
 	std::optional<std::string> Disassemble(std::uint64_t Address);
+
+	std::vector<std::string> Disassemble(std::uint64_t Address, std::uint32_t Lines);
 
 	const std::string GetName(const uint64_t SymbolAddress,
 		const bool Symbolized);
@@ -104,6 +137,43 @@ private:
 };
 
 extern Debugger_t g_Debugger;
+
+//
+// Reversed from dbgeng.dll
+//
+
+struct Breakpoint {
+	std::uint64_t Vtable;					// this+0x0
+
+	std::uint32_t MatchThreadId;			// this+0x20
+	std::uint32_t Id;						// this+0x2c
+	GUID		  Guid;						// this+0x30
+	std::uint32_t BreakType;				// this+0x40  (0: code breakpoint, 1: data breakpoint, )
+	std::uint8_t  Flags;					// this+0x44
+
+		
+	std::uint32_t DataSize;					// this+0x54
+	std::uint32_t DataAccessType;			// this+0x58
+	std::uint32_t PassCount;				// this+0x5c
+	std::uint32_t CurrentPassCount;			// this+0x60
+
+	unsigned short* CommandStringWide;		// this+0x68
+	unsigned short* ConditionString;		// this+0x70
+	std::uint64_t   pAssociatedThread;		// this+0x78
+	std::uint64_t   GlobalProcess;			// this+0x80
+	unsigned short* OffsetExpressionWide;	// this+0x88
+	std::uint32_t   OffsetExpressionSize;   // this+0x90
+
+	std::uint32_t AdderId;					// this+0xc0
+
+	std::uint32_t ProcType;					// this+0x144
+	std::uint32_t MachineTypeIndex;			// this+0x148
+
+	std::uint64_t Offset;					// this+0x160
+	std::uint32_t CommandSize;				// this+0x180
+
+	std::uint64_t CurrentUniqueId;			// this+0x198
+};
 
 enum Registers_t {
 	Rax = 1,

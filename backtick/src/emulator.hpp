@@ -11,8 +11,6 @@
 #include "globals.hpp"
 #include <set>
 
-#include "tracefile.hpp"
-
 //
 // Stolen from Axel Souchet - 0verclock's snapshot emulator project :p
 // https://github.com/0vercl0k/wtf/blob/main/src/wtf/bochscpu_backend.cc
@@ -75,8 +73,6 @@ public:
 
 	std::uint8_t VirtRead1(std::uint64_t Gva)  const;
 
-	// void DirtyPhysicalMemoryRange(std::uint64_t Gpa, std::uint64_t Len);
-
 	bool DirtyGpaPage(const std::uint64_t Gpa);
 
 	const auto GetDirtedPage() const { return &DirtiedPage_; }
@@ -92,6 +88,8 @@ public:
 	bool IsGvaMapped(std::uint64_t VirtualAddress) const;
 
 	void ListBreakpoint() const;
+
+	const std::unordered_map<uint32_t, std::uint64_t>& GetBreakpoints() const;
 
 	bool RemoveCodeBreakpoint(uint32_t Index);
 
@@ -231,9 +229,9 @@ private:
 
 	bool RunTillBranch_ = false;
 
-	bool GoingUp_ = false; //stop after return
+	bool GoingUp_	= false; //stop after return
 
-	bool StepOver_ = false;
+	bool StepOver_	= false;
 
 	bool ReverseStepOver_		= false;
 
@@ -250,8 +248,6 @@ private:
 	std::vector<CallInfoFrame>  CallTrace_;
 
 	bochscpu_cpu_state_t InitialCpuState_;
-
-	TraceFileStream FileStream_;
 };
 
 using TimeFrames_t = std::map<unsigned int, CpuState_t>;

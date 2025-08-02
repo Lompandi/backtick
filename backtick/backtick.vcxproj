@@ -157,7 +157,7 @@
     <ClInclude Include="src\libs\detours\include\detver.h" />
     <ClInclude Include="src\libs\detours\include\syelog.h" />
     <ClInclude Include="src\paging.hpp" />
-    <ClInclude Include="src\tracefile.hpp" />
+    <ClInclude Include="src\tui.hpp" />
     <ClInclude Include="src\utils.hpp" />
   </ItemGroup>
   <ItemGroup>
@@ -173,7 +173,7 @@
     <ClCompile Include="src\emulator.cpp" />
     <ClCompile Include="src\globals.cpp" />
     <ClCompile Include="src\hooks.cpp" />
-    <ClCompile Include="src\tracefile.cpp" />
+    <ClCompile Include="src\tui.cpp" />
     <ClCompile Include="src\utils.cpp" />
   </ItemGroup>
   <ItemGroup>

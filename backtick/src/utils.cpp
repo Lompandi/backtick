@@ -87,3 +87,11 @@ void Hexdump(const void* data, size_t size) {
         std::print("\n");
     }
 }
+
+void StripAllControlChars(std::string& s) {
+	s.erase(std::remove_if(s.begin(), s.end(),
+		[](unsigned char ch) {
+			return (ch < 0x20 && ch != ' ');
+		}),
+		s.end());
+}

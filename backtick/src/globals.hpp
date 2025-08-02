@@ -4,6 +4,7 @@
 
 #include "../pch.h"
 #include "utils.hpp"
+#include "tui.hpp"
 
 #include <bochscpu.hpp>
 
@@ -15,6 +16,8 @@ extern WINDBG_EXTENSION_APIS ExtensionApis;
 // Determin whether the user is currently in shadow state where emulator operation is accessable.
 //
 extern bool InShadowState;
+
+extern TerminalUI g_Tui;
 
 union MMPTE_HARDWARE {
     struct {

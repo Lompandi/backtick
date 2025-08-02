@@ -185,6 +185,41 @@ std::uint64_t Debugger_t::Msr(std::uint32_t Index) const {
     return Value;
 }
 
+std::vector<std::string> Debugger_t::Disassemble(std::uint64_t Address, std::uint32_t Lines) {
+    std::vector<std::string> disassembledLines;
+
+    std::uint64_t currentAddress = Address;
+
+    for (std::uint32_t i = 0; i < Lines; ++i) {
+        std::string buffer;
+        buffer.resize(1024);
+
+        ULONG disasmSize = 0;
+        ULONG64 nextAddress = 0;
+
+        HRESULT hr = Control_->Disassemble(
+            currentAddress,
+            DEBUG_DISASM_EFFECTIVE_ADDRESS,
+            buffer.data(),
+            static_cast<ULONG>(buffer.size()),
+            &disasmSize,
+            &nextAddress
+        );
+
+        if (hr == S_FALSE || FAILED(hr)) {
+            disassembledLines.push_back("???");
+        }
+        else {
+            buffer.resize(disasmSize);
+            StripAllControlChars(buffer);
+            disassembledLines.push_back(buffer);
+        }
+        currentAddress = nextAddress;
+    }
+
+    return disassembledLines;
+}
+
 std::optional<std::string> Debugger_t::Disassemble(std::uint64_t Address) {
     std::string Buffer;
     Buffer.resize(1024);
@@ -345,6 +380,36 @@ DEBUG_VALUE Debugger_t::Evaluate(std::string_view Expr, ULONG DesireType) const 
     DEBUG_VALUE Value = { 0 };
     Control_->Evaluate(Expr.data(), DesireType, &Value, NULL);
     return Value;
+}
+
+DefaultRegistersState Debugger_t::GetDefaultRegisterState() const {
+    DefaultRegistersState State{};
+    State.Rax = Reg64("rax");
+    State.Rbx = Reg64("rbx");
+    State.Rcx = Reg64("rcx");
+    State.Rdx = Reg64("rdx");
+    State.Rsi = Reg64("rsi");
+    State.Rdi = Reg64("rdi");
+    State.Rip = Reg64("rip");
+    State.Rsp = Reg64("rsp");
+    State.Rbp = Reg64("rbp");
+    State.R8 = Reg64("r8");
+    State.R9 = Reg64("r9");
+    State.R10 = Reg64("r10");
+    State.R11 = Reg64("r11");
+    State.R12 = Reg64("r12");
+    State.R13 = Reg64("r13");
+    State.R14 = Reg64("r14");
+    State.R15 = Reg64("r15");
+    State.Rflags = Reg64("efl");
+    State.Cs = Reg64("cs");
+    State.Ds = Reg64("ds");
+    State.Es = Reg64("es");
+    State.Fs = Reg64("fs");
+    State.Gs = Reg64("gs");
+    State.Ss = Reg64("ss");
+
+    return State;
 }
 
 bool Debugger_t::LoadCpuStateTo(CpuState_t& State) const {

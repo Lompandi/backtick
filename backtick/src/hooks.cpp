@@ -51,7 +51,7 @@ std::uint64_t GetPcAddress = 0;
 using GetPc_t = HRESULT(__fastcall*)(std::uint64_t, _ADDR*);
 static GetPc_t OriginalGetPcVal = nullptr;
 
-constexpr std::uint64_t ExecuteCommandOffset = 0x100F10;
+std::uint64_t ExecuteCommandAddress = 0;
 using ExecuteCommand_t = HRESULT(__fastcall*)(struct DebugClient*, const unsigned __int16*, signed int, int);
 static ExecuteCommand_t OriginalExecuteCommand = nullptr;
 
@@ -114,17 +114,9 @@ static HRESULT ReadVirtualHook(void* pThis, void* Process, uint64_t ReadAddress,
     return S_OK;
 }
 
-// eb address value -> data -> cache
-// db address <-> cache < network > target
-// shadow
-// eb address value -> cache -> emulator
-//unshadow
-//db address ->
-
 static HRESULT WriteVirtualHook(void* pThis, void* Process, uint64_t WriteAddress, void* Buffer, uint32_t Size, uint32_t* BytesWritten) {
     HooksDbg("[*] Writing {} bytes to {:#x}", Size, WriteAddress);
 
-    //TODO: Idk if the page is not loaded probably bring it up before writing to it
     if (!g_Emulator.VirtWrite(WriteAddress, (const uint8_t*)Buffer, Size)) {
         return S_FALSE;
     }
@@ -197,10 +189,13 @@ static HRESULT ExecuteCommandHook(struct DebugClient* Client,
     WCommandString.assign(reinterpret_cast<const char16_t*>(Command));
 
     if (ExecuteHook(WCommandString)) {
+        g_Tui.RenderFrame();
         return S_OK;
     }
 
-    return OriginalExecuteCommand(Client, Command, a2, a1);
+    HRESULT Status = OriginalExecuteCommand(Client, Command, a2, a1);
+    g_Tui.RenderFrame();
+    return Status;
 }
 
 void Hooks::FlushDbsSplayTreeCache() {
@@ -237,7 +232,7 @@ bool Hooks::Enable() {
     ));
 
     OriginalExecuteCommand = reinterpret_cast<ExecuteCommand_t>(AddDetour(
-        (void*)(DbgEngBase + ExecuteCommandOffset), (void*)ExecuteCommandHook
+        (void*)(ExecuteCommandAddress), (void*)ExecuteCommandHook
     ));
 
     OriginalReadVirtual = reinterpret_cast<ReadVirtualOffset_t>(AddDetour(
@@ -316,6 +311,11 @@ bool Hooks::Restore() {
 48 89 85 B0 03 00 00
 */
 
+/*
+XREF
+41 B8 86 00 00 00 48 8B D3 49 8B CD E8 ?? ?? ?? ??
+*/
+
 bool Hooks::Init() {
 	std::uintptr_t DbgEngBase = (std::uint64_t)GetModuleHandleA("dbgeng.dll");
 
@@ -328,23 +328,20 @@ bool Hooks::Init() {
 
     GetPcAddress = ScanForSignature("dbgeng.dll", "48 83 EC ?? 48 89 54 24 ?? BA ?? ?? ?? ?? 44 8B CA 44 8D 42 ??");
 
+    std::uint64_t ExecuteCommandXref = ScanForSignature("dbgeng.dll", "41 B8 86 00 00 00 48 8B D3 49 8B CD E8 ?? ?? ?? ??");
+    std::int32_t Offset = *(std::int32_t*)((uint8_t*)ExecuteCommandXref + 0xd);
+    ExecuteCommandAddress = ExecuteCommandXref + 12 + Offset + 5;
+
     DbsSplayTreeCacheFlushAddress = (void*)(DbgEngBase + DbsSplayTreeCacheFlushOffset);
 
     // SetReg Hook
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x44, &SetRegisterValHook);
-
-    // GetPC Hook
-    // RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x46, &GetPcHook);
 
     // SetPC Hook
     RegisterVtableHook((void**)(DbgEngBase + Amd64MachineInfoVtableOffset),   0x47, &SetPcHook);
 
 
     RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0x1E, &LiveKernelTargetInfoCached__ReadVirtualHook);
-
-    // RegisterVtableHook((void**)(DbgEngBase + ConnLiveKernelTargetInfoOffset), 0x21, &LiveKernelTargetInfoCached__WriteVirtualHook);
-
-
 
 	return true;
 }

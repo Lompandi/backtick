@@ -60,3 +60,4 @@ uint64_t ExtractBits(const T& value, size_t startBit, size_t endBit) {
     return result;
 }
 
+void StripAllControlChars(std::string& s);

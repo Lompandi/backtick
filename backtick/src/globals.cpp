@@ -8,6 +8,8 @@ WINDBG_EXTENSION_APIS ExtensionApis = { 0 };
 
 bool InShadowState = false;
 
+TerminalUI g_Tui;
+
 std::string REGVAL::ToString() const {
 
     switch (Type) {

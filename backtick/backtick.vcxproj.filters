@@ -54,7 +54,7 @@
     <ClInclude Include="src\cmdparsing.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\tracefile.hpp">
+    <ClInclude Include="src\tui.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -83,7 +83,7 @@
     <ClCompile Include="src\cmdparsing.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\tracefile.cpp">
+    <ClCompile Include="src\tui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
